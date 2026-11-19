@@ -1,0 +1,19 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "danka-club",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // One Durable Object per room: it holds the deck, turns, timers and coins.
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "vars": {
+    // "dev" accepts tokens like dev:<uid>:<name> for local testing.
+    // Set to "firebase" and fill FIREBASE_PROJECT_ID before deploying.
+    "AUTH_MODE": "dev",
+    "FIREBASE_PROJECT_ID": ""
+  },
+  "observability": { "enabled": true }
+}
