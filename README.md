@@ -46,19 +46,20 @@ node server/scripts/sim.mjs dealers 5   # any mode, any number of hands
 
 Bets carry a client-made `id`; a resent bet is acknowledged but never charged twice.
 
-## Deploy to Cloudflare (automatic)
+## Deploy to Cloudflare (automatic, via Workers Builds)
 
-Every push to `main` runs `.github/workflows/deploy.yml`: tests, type check, build the web game, then
-`wrangler deploy`. The game and the room server share one address:
-`https://danka-club.<your-subdomain>.workers.dev`.
+Cloudflare builds and deploys straight from this GitHub repo on every push to `main`. No GitHub Actions or API tokens needed.
 
-One-time setup:
-1. Cloudflare dashboard → My Profile → API Tokens → Create Token → template **Edit Cloudflare Workers** → create, copy the token.
-2. Cloudflare dashboard → Workers & Pages → copy your **Account ID** (right-hand side). If Workers asks you to pick a
-   `workers.dev` subdomain, choose one.
-3. GitHub → this repo → Settings → Secrets and variables → Actions → New repository secret:
-   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
-4. GitHub → Actions → Test and deploy → Run workflow (or push any commit).
+One-time setup in the Cloudflare dashboard:
+1. **Workers & Pages → Create application → Import a repository → GitHub**. Authorise the Cloudflare app for `danka-club`.
+2. Project name: **`danka-club`** (must match `name` in `server/wrangler.jsonc`).
+3. Build settings:
+   - Root directory / Path: **`server`**
+   - Build command: **`cd .. && npm ci && npm run build`**
+   - Deploy command: **`npx wrangler deploy`**
+4. **Save and Deploy.** The game opens at `https://danka-club.<your-subdomain>.workers.dev`.
+
+`.github/workflows/deploy.yml` does the same on GitHub Actions, but only when run manually.
 
 Sign-in is in **guest** mode for the test phase: each phone keeps a long random id plus the name typed in.
 Switch `AUTH_MODE` to `firebase` (and set `FIREBASE_PROJECT_ID`) when Google sign-in is added.

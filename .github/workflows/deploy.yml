@@ -1,8 +1,7 @@
 name: Test and deploy
 
+# Manual only. Day-to-day deploys run on Cloudflare Workers Builds (see README).
 on:
-  push:
-    branches: [main]
   workflow_dispatch: {}
 
 concurrency:
