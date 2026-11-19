@@ -25,6 +25,10 @@ interface Attachment {
 
 const RECENT_MAX = 300;
 const PURGE_AFTER_CLOSE_MS = 60 * 60 * 1000;
+/** Extra time before an auto-pack, so a tap sent in the last moment on a slow network still counts. */
+const TURN_GRACE_MS = 1500;
+/** Per-connection flood guard: at most this many messages per second. */
+const MAX_MSGS_PER_SEC = 20;
 
 /**
  * One instance per room code. The single source of truth for that room's
@@ -33,9 +37,12 @@ const PURGE_AFTER_CLOSE_MS = 60 * 60 * 1000;
  */
 export class Room extends DurableObject<Env> {
   private s: Saved | null = null;
+  private buckets = new WeakMap<WebSocket, { tokens: number; at: number }>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    // Heartbeats ("ping" → "pong") are answered by the runtime without waking this object.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
     ctx.blockConcurrencyWhile(async () => {
       this.s = (await ctx.storage.get<Saved>('room')) ?? null;
     });
@@ -120,6 +127,7 @@ export class Room extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     if (!this.s) return;
     const me = ws.deserializeAttachment() as Attachment;
+    if (!this.allow(ws)) return this.send(ws, { t: 'error', code: 'slow_down', message: 'Too many taps. Slow down a little.' });
     let msg: ClientMsg;
     try {
       msg = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw));
@@ -209,6 +217,17 @@ export class Room extends DurableObject<Env> {
     await this.commit([]);
   }
 
+  private allow(ws: WebSocket): boolean {
+    const now = Date.now();
+    const b = this.buckets.get(ws) ?? { tokens: MAX_MSGS_PER_SEC, at: now };
+    b.tokens = Math.min(MAX_MSGS_PER_SEC, b.tokens + ((now - b.at) / 1000) * MAX_MSGS_PER_SEC);
+    b.at = now;
+    if (b.tokens < 1) { this.buckets.set(ws, b); return false; }
+    b.tokens -= 1;
+    this.buckets.set(ws, b);
+    return true;
+  }
+
   /* ---------------- timers ---------------- */
 
   async alarm(): Promise<void> {
@@ -251,7 +270,9 @@ export class Room extends DurableObject<Env> {
 
   private async scheduleAlarm(): Promise<void> {
     const s = this.s!;
-    const at = s.purgeAt ?? s.game.deadline?.at ?? (s.game.phase === 'waiting' ? s.game.createdAt + ROOM_TTL_MS : null);
+    const d = s.game.deadline;
+    const due = d ? d.at + (d.kind === 'turn' ? TURN_GRACE_MS : 0) : null;
+    const at = s.purgeAt ?? due ?? (s.game.phase === 'waiting' ? s.game.createdAt + ROOM_TTL_MS : null);
     if (at) await this.ctx.storage.setAlarm(at);
     else await this.ctx.storage.deleteAlarm();
   }

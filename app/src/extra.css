@@ -17,3 +17,10 @@ button.chip-tag b{color:var(--ivory)}
 .verify code{display:block; margin-top:2px}
 #result{overflow-y:auto}
 .verify code{max-height:66px; overflow:auto}
+
+.signal{display:inline-flex; align-items:flex-end; gap:2px; height:16px; padding:0 4px}
+.signal i{display:block; width:4px; border-radius:2px; background:var(--win)}
+.signal i:nth-child(1){height:6px} .signal i:nth-child(2){height:10px} .signal i:nth-child(3){height:15px}
+.signal.fair i{background:var(--seen)} .signal.fair i:nth-child(3){opacity:.25}
+.signal.poor i{background:var(--alert)} .signal.poor i:nth-child(2), .signal.poor i:nth-child(3){opacity:.25}
+.signal.offline i{background:var(--muted); opacity:.3}

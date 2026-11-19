@@ -31,6 +31,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    // Back into your seat after a refresh or the browser closing the tab.
+    const saved = sessionOrLocal('danka-room');
+    if (loadMe() && saved && ALPH.test(saved) && !prefill.current) { setCode(saved); setScreen('room'); }
     applySettings();
     const unlock = () => ensureAudio();
     document.addEventListener('pointerdown', unlock, { once: true });
@@ -38,6 +41,7 @@ export function App() {
   }, []);
 
   const enterRoom = (c: string) => {
+    try { localStorage.setItem('danka-room', c); } catch { /* ignore */ }
     setCode(c);
     setScreen('room');
     history.replaceState(null, '', location.pathname);
@@ -71,7 +75,7 @@ export function App() {
       )}
       {me && screen === 'room' && code && (
         <Room key={code} me={me} code={code} toast={showToast}
-          onExit={(msg) => { if (msg) showToast(msg); setCode(null); setScreen('home'); }}
+          onExit={(msg) => { try { localStorage.removeItem('danka-room'); } catch { /* ignore */ } if (msg) showToast(msg); setCode(null); setScreen('home'); }}
           onSettings={() => setSettingsOpen(true)} />
       )}
       <div id="fx" />
@@ -208,6 +212,10 @@ function Join({ prefill, onBack, onJoined }: { prefill: string; onBack: () => vo
       </div>
     </section>
   );
+}
+
+function sessionOrLocal(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
 }
 
 export function Logo() {

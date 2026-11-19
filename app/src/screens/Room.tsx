@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { HAND_MODES, MODE_NAMES, verifyCommitment, type GameEvent, type PlayerView, type SessionMode } from '@danka/engine';
 import { tokenFor, type Me } from '../lib/identity';
-import { RoomClient, SERVER, type ServerMsg, type Status } from '../lib/net';
+import { RoomClient, SERVER, type Quality, type ServerMsg, type Status } from '../lib/net';
 import { play } from '../lib/sound';
 import { buzz, HAP } from '../lib/haptics';
 import { settings } from '../lib/settings';
@@ -56,6 +56,7 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
   const [reactTo, setReactTo] = useState<number | null>(null);
   const [verify, setVerify] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [quality, setQuality] = useState<{ q: Quality; rtt: number }>({ q: 'good', rtt: 0 });
   const client = useRef<RoomClient | null>(null);
   const queue = useRef<GameEvent[]>([]);
   const viewRef = useRef<PlayerView | null>(null);
@@ -80,14 +81,34 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
       if (s === 'replaced') onExit('This table is open on another phone or tab.');
       if (s === 'left') onExit();
       if (s === 'closed') onExit('The admin closed the room.');
-    });
+    }, (q, rtt) => setQuality({ q, rtt }));
     client.current = c;
     const wake = () => { if (document.visibilityState === 'visible') c.wake(); };
+    const online = () => c.wake();
+    const offline = () => c.offline();
     document.addEventListener('visibilitychange', wake);
-    window.addEventListener('online', wake);
-    return () => { c.stop(); document.removeEventListener('visibilitychange', wake); window.removeEventListener('online', wake); };
+    window.addEventListener('online', online);
+    window.addEventListener('offline', offline);
+    return () => {
+      c.stop();
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('online', online);
+      window.removeEventListener('offline', offline);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
+
+  /* ---------- keep the screen awake while seated (a sleeping phone drops its connection) ---------- */
+  useEffect(() => {
+    let lock: WakeLockSentinel | null = null;
+    const get = async () => {
+      try { if ('wakeLock' in navigator && document.visibilityState === 'visible') lock = await navigator.wakeLock.request('screen'); } catch { /* not allowed */ }
+    };
+    const vis = () => { if (document.visibilityState === 'visible') get(); };
+    get();
+    document.addEventListener('visibilitychange', vis);
+    return () => { document.removeEventListener('visibilitychange', vis); lock?.release().catch(() => {}); };
+  }, []);
 
   /* ---------- events → sound, haptics, animation ---------- */
   useEffect(() => {
@@ -203,13 +224,14 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
   }
 
   const send = client.current!;
-  const banner = status === 'reconnecting' ? <div className="status-banner">Connection lost. Reconnecting… your seat is held.</div> : null;
+  const banner = status === 'reconnecting' || quality.q === 'offline'
+    ? <div className="status-banner">{navigator.onLine ? 'Connection lost. Reconnecting… your seat is held.' : 'No internet. Your seat is held; you will rejoin automatically.'}</div> : null;
 
   if (view.phase === 'waiting') return <><Lobby view={view} code={code} client={send} toast={toast} onExit={onExit} onSettings={onSettings} />{banner}</>;
 
   return (
     <>
-      <Table view={view} code={code} client={send} dealing={dealing} onSheet={setSheet} onReact={setReactTo} onSettings={onSettings} />
+      <Table view={view} code={code} client={send} quality={quality} dealing={dealing} onSheet={setSheet} onReact={setReactTo} onSettings={onSettings} />
       {banner}
       <ShowOverlay view={view} on={showing} />
       <div className={`scrim${sheet && sheet !== 'result' ? ' on' : ''}`} onClick={() => setSheet(null)} />
@@ -313,7 +335,7 @@ function Lobby({ view, code, client, toast, onExit, onSettings }: { view: Player
 
 /* ================= TABLE ================= */
 
-function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { view: PlayerView; code: string; client: RoomClient; dealing: boolean; onSheet: (s: Sheet) => void; onReact: (seat: number) => void; onSettings: () => void }) {
+function Table({ view, code, client, quality, dealing, onSheet, onReact, onSettings }: { view: PlayerView; code: string; client: RoomClient; quality: { q: Quality; rtt: number }; dealing: boolean; onSheet: (s: Sheet) => void; onReact: (seat: number) => void; onSettings: () => void }) {
   const you = view.you, n = view.seats.length;
   const me = view.seats[you];
   const cardsVisible = view.phase !== 'dealing' && view.phase !== 'picking' && !dealing;
@@ -335,12 +357,17 @@ function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { 
   const dealLeft = view.deadline?.kind === 'deal' ? Math.max(0, Math.ceil((view.deadline.at - client.serverNow()) / 1000)) : 0;
   const [, force] = useState(0);
   useEffect(() => { if (!o.deal) return; const t = setInterval(() => force((x) => x + 1), 1000); return () => clearInterval(t); }, [o.deal]);
+  // Lock the bet buttons from the tap until the server confirms, so a double tap can't send two bets.
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setBusy(false); }, [view]);
+  useEffect(() => { if (!busy) return; const t = setTimeout(() => setBusy(false), 4000); return () => clearTimeout(t); }, [busy]);
+  const bet = (a: 'pack' | 'chaal' | 'raise' | 'show' | 'see') => { if (busy && a !== 'see') return; if (a !== 'see') setBusy(true); client.act({ type: a }); };
 
   const status =
     view.phase === 'picking' ? `${view.dealer === you ? 'You are' : view.seats[view.dealer].name + ' is'} picking the game…`
     : view.waitingForNextHand ? 'You joined during this hand. You are dealt in from the next hand.'
     : view.phase === 'dealing' ? (o.deal ? 'You are the dealer. Tap the deck to deal.' : `${view.seats[view.dealer].name} is dealing`)
-    : view.phase === 'betting' ? (me.status !== 'in' ? 'You packed. Watching the rest of the hand.' : view.turn === you ? `Your turn. ${me.seen ? 'You are Seen, so you bet double.' : 'You are playing Blind.'}` : `${view.seats[view.turn]?.name} is thinking…`)
+    : view.phase === 'betting' ? (me.status !== 'in' ? 'You packed. Watching the rest of the hand.' : view.turn === you ? `Your turn. ${me.seen ? 'You are Seen, so you bet double.' : 'You are playing Blind.'}` : view.seats[view.turn]?.connected === false ? `${view.seats[view.turn]?.name} lost connection. Seat held; they pack if time runs out.` : `${view.seats[view.turn]?.name} is thinking…`)
     : view.phase === 'hand_over' ? `${view.result ? (view.result.winner === you ? 'You win' : view.seats[view.result.winner].name + ' wins') : ''} the pot`
     : view.phase === 'session_over' ? 'Tournament over' : '';
 
@@ -350,6 +377,7 @@ function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { 
         <button className="icon-btn" aria-label="Leave table" onClick={() => { play('tap'); onSheet('leave'); }}><Icon name="home" /></button>
         <span className="room-chip">{code}</span>
         <span className="hand-no num">Hand {view.hand} · {view.modeName}</span>
+        <span className={`signal ${quality.q}`} role="img" aria-label={quality.q === 'offline' ? 'Offline' : `Connection ${quality.q}, ${Math.round(quality.rtt)} ms`} title={quality.q === 'offline' ? 'Offline' : `${Math.round(quality.rtt)} ms`}><i /><i /><i /></span>
         <button className="icon-btn" aria-label="Ledger" onClick={() => { play('tap'); onSheet('ledger'); }}><Icon name="ledger" /></button>
         <button className="icon-btn" aria-label="Settings" onClick={onSettings}><Icon name="sliders" /></button>
       </div>
@@ -405,12 +433,12 @@ function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { 
       <div className="actions">
         <div className="status-line">{status}</div>
         <div className="abtns">
-          <button className="ab pack" disabled={!o.pack} onClick={() => client.act({ type: 'pack' })}>Pack<small>fold</small></button>
-          {!me.seen && <button className="ab see" disabled={!o.see} onClick={() => client.act({ type: 'see' })}>See<small>cards</small></button>}
-          <button className="ab chaal" disabled={o.chaal === null} onClick={() => client.act({ type: 'chaal' })}>
+          <button className="ab pack" disabled={!o.pack || busy} onClick={() => bet('pack')}>Pack<small>fold</small></button>
+          {!me.seen && <button className="ab see" disabled={!o.see} onClick={() => bet('see')}>See<small>cards</small></button>}
+          <button className="ab chaal" disabled={o.chaal === null || busy} onClick={() => bet('chaal')}>
             <span>{me.seen ? 'Chaal' : 'Blind'}</span><small className="num">{o.chaal ?? view.stake * (me.seen ? view.seenMultiplier : 1)}</small></button>
-          <button className="ab raise" disabled={o.raise === null} onClick={() => client.act({ type: 'raise' })}>Raise<small className="num">{o.raise ?? '—'}</small></button>
-          {o.show !== null && <button className="ab show" onClick={() => client.act({ type: 'show' })}>Show<small className="num">{o.show}</small></button>}
+          <button className="ab raise" disabled={o.raise === null || busy} onClick={() => bet('raise')}>Raise<small className="num">{o.raise ?? '—'}</small></button>
+          {o.show !== null && <button className="ab show" disabled={busy} onClick={() => bet('show')}>Show<small className="num">{o.show}</small></button>}
         </div>
       </div>
     </section>
