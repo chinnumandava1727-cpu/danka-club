@@ -4,31 +4,37 @@ Private 7-player Danka card game. Coins have no cash value.
 
 | Folder | What it is |
 | --- | --- |
-| `packages/engine` | The rules engine: cards, cryptographic shuffle, hand ranking, all game modes, betting, loans, fairness proof, and what each phone may see. Pure TypeScript, no I/O. |
+| `packages/engine` | The Danka rules engine: cards, cryptographic shuffle, hand ranking for 1–4 cards, Well Cut, betting, loans, bonuses, rounds, Placecut, ledger, fairness proof, and what each phone may see. Pure TypeScript, no I/O. |
 | `server` | Cloudflare Worker + one Durable Object per room. Holds the deck, turns, timers and coins; talks to the 7 phones over WebSockets. |
 | `app` | The game client: React + Vite. Served as a web game from the same Cloudflare address; wrapped with Capacitor for Android next. |
 
 ## House rules
 
-**Every rule lives in `packages/engine/src/rules.ts` (`HouseRules`).** The current values (`STAND_IN_RULES`)
-are standard Teen Patti, used only until the group's own rules are written in. Nothing else in the code
-hard-codes a rule. Still missing from the spec: betting details, Blind/Seen, Show, hand ranking, Well Cut,
-the random card count, banking, loans and settlement (open questions Q1–Q12).
+The game follows the group's own rules document (DANKA CLUB Complete Game Rules, sections 1–21) and nothing else:
+no Chaal, no Raise, no boot, no extra modes. The values live in `packages/engine/src/rules.ts` (`DANKA_RULES`);
+the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packages/engine/src/hands.ts`.
 
-Already implemented from the spec:
-- The first player to enter deals game 1; the admin cannot change it. Each hand's winner deals the next.
-- The server shuffles a fresh 52-card deck every hand (crypto RNG, Fisher–Yates without modulo bias)
-  and locks cards to seats before the dealer's deal, which is ceremonial. Unselected cards never leave the server.
-- Cards are dealt clockwise from the dealer's left. Each phone only ever receives its own cards.
-- Fairness proof: SHA-256 of `deck|salt` is published before the deal; deck and salt are revealed after the hand.
-- The creator picks the table size (2–7 players). Seats fill in entry order; extra players get "table full".
-  The admin can add or remove seats in the waiting room or between hands, or start early with 2+ players;
-  latecomers join any time (except Tournament Night) and play from the next hand.
-- Reconnecting returns you to your seat; a refresh puts you straight back at the table.
-- Mobile-grade connection handling: 10 s heartbeat (answered without waking the room), dead-connection
-  detection, jittered reconnects, 1.5 s turn grace for slow networks, double-tap lock, screen kept awake.
-- Turn timer with auto-pack, auto-deal, room codes without 0/O/1/I/L, 24-hour expiry, admin closes between hands.
-- Modes: Classic, Muflis, AK47, Joker Draw, Best of Four, Dealer's Choice, Tournament Night.
+- 2–7 players. The first to enter is admin and deals game 1; every winner deals the next game (Well Cut games included).
+- 100 coins each. Bank loans up to 100 per player in total, recorded as owed. Lose all 200 and you sit out until Placecut, then leave.
+- Blind costs 1, Seen costs 2. Seeing your cards makes you Seen. Pack any time on your turn.
+- Show only when two players remain, priced automatically (Blind 1, Seen 2). A Blind player can't Show against another Blind player.
+- When everyone else is Seen, the last Blind player gets 3 more Blind turns, then their cards are shown automatically.
+- Sideshow only when every active player is Seen: with the next active player on your left, costs 2, can't be refused,
+  compared privately, weaker hand folds.
+- The dealer drags down the deck to cut. If the number of cut cards divides exactly by the active players, it is a
+  **Well Cut**: four compulsory games of 4, 3, 2 and 1 cards. The round clock never interrupts a Well Cut.
+- Ranking: 3-card Teen Patti order; 2-card (pair beats no pair); 1-card (highest card); 4-card (Four of a Kind highest).
+  Suits break every tie: Spades > Hearts > Diamonds > Clubs, so there is never a draw.
+- Bonus N×(N−1), only when the holder wins the game: Three of a Kind in normal 3-card games, Four of a Kind in Well Cut game 1.
+- 20-minute rounds. When the clock runs out, the current game finishes, then **Placecut**: scorecard for everyone,
+  new players may join, anyone may leave, admin starts the next round. Balances and loans carry forward.
+- Admin: start rounds, table size, turn timer on/off (off by default; time out = pack), call off the session,
+  export the settlement PDF. The admin can't see cards, touch the shuffle or edit balances; admin actions are logged.
+- Fairness: crypto shuffle of a fresh deck every game, SHA-256 fingerprint of `deck|salt` published before the cut,
+  revealed after the game. Every coin movement is an entry in a permanent ledger (Durable Object SQLite table).
+
+Connection handling: 10 s heartbeat answered without waking the room, dead-connection detection, jittered reconnects,
+resent actions applied once (action ids), 1.5 s grace on timed turns, double-tap lock, screen kept awake, room resume after refresh.
 
 ## Run it
 
@@ -37,19 +43,20 @@ npm install
 npm test                 # engine unit tests
 npm run build            # build the web game into app/dist
 npm run dev              # local server + game on http://127.0.0.1:8787
-npm run sim              # in another terminal: 7 bots play a game night and check everything
-node server/scripts/sim.mjs dealers 5   # any mode, any number of hands
+# bots play two short rounds against a local server with 40-second rounds:
+cd server && npx wrangler dev --port 8787 --ip 127.0.0.1 --var AUTH_MODE:dev --var DEV_ROUND_SECONDS:40 --var DEV_NEXT_GAME_SECONDS:1
+node server/scripts/sim.mjs   # in another terminal
 ```
 
 ## Protocol (phone ↔ room)
 
-- `POST /api/rooms` `{ mode }` with `Authorization: Bearer <token>` → `{ code, joinUrl }`
+- `POST /api/rooms` `{ seats }` with `Authorization: Bearer <token>` → `{ code, joinUrl }`
 - `GET /api/rooms/:code` → can I join? (`room_not_found`, `invalid_code`, full, expired)
 - `GET /api/rooms/:code/ws?token=…` → WebSocket. Messages are typed in `server/src/protocol.ts`.
   Every `state` message is personal (`viewFor`) and carries `events` for animations.
 - `GET /j/:code` → the WhatsApp invite page (opens `dankaclub://join/CODE`).
 
-Bets carry a client-made `id`; a resent bet is acknowledged but never charged twice.
+Bets and loans carry a client-made `id`; a resent one is acknowledged but never applied twice.
 
 ## Deploy to Cloudflare (automatic, via Workers Builds)
 
@@ -69,4 +76,4 @@ One-time setup in the Cloudflare dashboard:
 Sign-in is in **guest** mode for the test phase: each phone keeps a long random id plus the name typed in.
 Switch `AUTH_MODE` to `firebase` (and set `FIREBASE_PROJECT_ID`) when Google sign-in is added.
 
-To do before a wider release: Google sign-in, join rate limiting per IP (spec: 10/min), pause vote, D1 for club stats.
+To do before a wider release: Android app (Capacitor), Google sign-in, join rate limiting per IP.

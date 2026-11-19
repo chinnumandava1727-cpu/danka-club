@@ -1,21 +1,19 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-  type GameEvent, type GameState, type SessionMode, GameError, SESSION_MODES, STAND_IN_RULES,
-  close, commitmentInput, createGame, setTableSize, deal, deckString, freshDeck, join, leave, needsDeck, nextHand,
-  onDeadline, pickMode, prepareDeal, randomHex, seatOf, setConnected, setReady, setSessionMode, sha256Hex,
-  shuffle, start, act, viewFor,
+  type GameEvent, type State, type Tx, DANKA_RULES, GameError, act, callOff, commitmentInput, createRoom, cryptoRandInt, cut, deal,
+  deckString, freshDeck, join, leave, needsDeck, onDeadline, prepareDeck, randomHex, seatOf, sessionReport, setConnected, setTableSize,
+  setTimer, sha256Hex, shuffle, startRound, takeLoan, viewFor,
 } from '@danka/engine';
 import { ROOM_TTL_MS } from './codes';
 import { CLOSE, THROWABLES, type ClientMsg, type ServerMsg } from './protocol';
 import type { Env } from './index';
 
 interface Saved {
-  game: GameState;
+  game: State;
   code: string;
   seq: number;
-  /** Recent action ids, so a resent bet is never applied twice. */
+  /** Recent action ids, so a resent action is never applied twice (§17). */
   recent: string[];
-  purgeAt: number | null;
 }
 
 interface Attachment {
@@ -23,17 +21,26 @@ interface Attachment {
   name: string;
 }
 
-const RECENT_MAX = 300;
-const PURGE_AFTER_CLOSE_MS = 60 * 60 * 1000;
-/** Extra time before an auto-pack, so a tap sent in the last moment on a slow network still counts. */
+const RECENT_MAX = 400;
+/** Extra time before an automatic pack (timer on), so a last-moment tap on a slow network still counts. */
 const TURN_GRACE_MS = 1500;
-/** Per-connection flood guard: at most this many messages per second. */
+/** Per-connection flood guard. */
 const MAX_MSGS_PER_SEC = 20;
 
 /**
- * One instance per room code. The single source of truth for that room's
- * cards, turns, timers and coins. Phones only send intentions and draw what
- * this object broadcasts.
+ * §4–§5 The dealer's cut. The dealer drags somewhere down the deck without seeing a number;
+ * the exact count is their position plus a few cards of luck, so nobody can aim for a Well Cut.
+ */
+export function cutCount(at: number): number {
+  const pos = Math.max(0, Math.min(1, Number.isFinite(at) ? at : 0.5));
+  const base = 3 + Math.round(pos * 44); // 3..47
+  const luck = cryptoRandInt(7) - 3; // −3..+3
+  return Math.max(1, Math.min(51, base + luck));
+}
+
+/**
+ * One instance per room code: the single source of truth for that room's cards, turns,
+ * rounds and coins. Phones only send intentions and draw what this object broadcasts.
  */
 export class Room extends DurableObject<Env> {
   private s: Saved | null = null;
@@ -43,8 +50,13 @@ export class Room extends DurableObject<Env> {
     super(ctx, env);
     // Heartbeats ("ping" → "pong") are answered by the runtime without waking this object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
+    // §17 The permanent ledger: every transaction, never deleted.
+    ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ledger (
+      id INTEGER PRIMARY KEY, at INTEGER, round INTEGER, game INTEGER, uid TEXT, name TEXT,
+      type TEXT, amount INTEGER, balance INTEGER, note TEXT)`);
     ctx.blockConcurrencyWhile(async () => {
-      this.s = (await ctx.storage.get<Saved>('room')) ?? null;
+      const saved = await ctx.storage.get<Saved>('room');
+      this.s = saved && saved.game?.v === 2 ? saved : null;
     });
   }
 
@@ -58,13 +70,24 @@ export class Room extends DurableObject<Env> {
     return new Response('Not found', { status: 404 });
   }
 
-  private async init(body: { code: string; mode: SessionMode; uid: string; name: string; seats?: number }): Promise<Response> {
+  private async init(body: { code: string; uid: string; name: string; seats?: number }): Promise<Response> {
     if (this.s) return Response.json({ error: 'exists' }, { status: 409 });
-    const mode = SESSION_MODES.includes(body.mode) ? body.mode : 'classic';
     const now = Date.now();
-    const game = createGame({ rules: { ...STAND_IN_RULES }, sessionMode: mode, admin: { uid: body.uid, name: body.name }, now, tableSize: body.seats });
-    this.s = { game, code: body.code, seq: 1, recent: [], purgeAt: null };
+    const rules = { ...DANKA_RULES, wellCutSequence: [...DANKA_RULES.wellCutSequence] };
+    if (this.env.AUTH_MODE === 'dev') {
+      if (Number(this.env.DEV_ROUND_SECONDS) > 0) rules.roundMinutes = Number(this.env.DEV_ROUND_SECONDS) / 60;
+      if (Number(this.env.DEV_NEXT_GAME_SECONDS) > 0) rules.nextGameSeconds = Number(this.env.DEV_NEXT_GAME_SECONDS);
+    }
+    const game = createRoom({
+      rules,
+      admin: { uid: body.uid, name: body.name },
+      now,
+      tableSize: body.seats,
+    });
+    this.s = { game, code: body.code, seq: 1, recent: [] };
+    this.flushLedger();
     await this.persist();
+    await this.scheduleAlarm();
     return Response.json({ code: body.code });
   }
 
@@ -74,18 +97,20 @@ export class Room extends DurableObject<Env> {
     return {
       exists: true,
       phase: g.phase,
-      seats: g.seats.length,
+      round: g.round,
+      seats: g.players.length,
       tableSize: g.tableSize,
-      full: g.seats.length >= g.tableSize,
-      closed: g.phase === 'closed',
+      full: g.players.length >= g.tableSize,
+      joinable: g.phase === 'lobby' || g.phase === 'placecut',
+      closed: g.phase === 'ended',
       expired: this.expired(),
-      sessionMode: g.sessionMode,
-      players: g.seats.map((s) => s.name),
+      players: g.players.map((p) => p.name),
     };
   }
 
+  /** Rooms that never start a round expire after 24 hours. Played rooms keep their history. */
   private expired(): boolean {
-    return !!this.s && this.s.game.phase === 'waiting' && Date.now() - this.s.game.createdAt > ROOM_TTL_MS;
+    return !!this.s && this.s.game.round === 0 && this.s.game.phase === 'lobby' && Date.now() - this.s.game.createdAt > ROOM_TTL_MS;
   }
 
   private async openSocket(req: Request): Promise<Response> {
@@ -94,14 +119,12 @@ export class Room extends DurableObject<Env> {
     const name = req.headers.get('x-name') ?? 'Player';
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
-
     const reject = (code: string, message: string) => {
       server.accept();
       server.send(JSON.stringify({ t: 'error', code, message } satisfies ServerMsg));
       server.close(CLOSE.REJECTED, code);
       return new Response(null, { status: 101, webSocket: client });
     };
-
     if (!this.s) return reject('room_not_found', 'No room with that code.');
     if (this.expired()) return reject('room_expired', 'This room code has expired. Ask for a new one.');
 
@@ -112,8 +135,6 @@ export class Room extends DurableObject<Env> {
       if (e instanceof GameError) return reject(e.code, e.message);
       throw e;
     }
-
-    // One live connection per player: a new phone or tab replaces the old one.
     for (const ws of this.ctx.getWebSockets(uid)) {
       try { ws.close(CLOSE.REPLACED, 'replaced'); } catch { /* already closed */ }
     }
@@ -137,14 +158,13 @@ export class Room extends DurableObject<Env> {
     }
     const g = this.s.game;
     const now = Date.now();
-
     try {
       switch (msg.t) {
         case 'ping':
           return this.send(ws, { t: 'pong', c: msg.c, s: now });
         case 'react': {
           const from = seatOf(g, me.uid);
-          if (from < 0 || !THROWABLES.includes(msg.kind) || !(msg.to >= 0 && msg.to < g.seats.length)) return;
+          if (from < 0 || !THROWABLES.includes(msg.kind) || !(msg.to >= 0 && msg.to < g.players.length)) return;
           return this.broadcastRaw({ t: 'react', from, to: msg.to, kind: msg.kind });
         }
         case 'chat': {
@@ -153,10 +173,11 @@ export class Room extends DurableObject<Env> {
           if (from < 0 || !text) return;
           return this.broadcastRaw({ t: 'chat', from, text, at: now });
         }
-        case 'act': {
+        case 'act':
+        case 'loan': {
           const key = `${me.uid}:${msg.id}`;
           if (msg.id && this.s.recent.includes(key)) return this.send(ws, { t: 'ack', id: msg.id });
-          const events = act(g, me.uid, msg.action, now);
+          const events = msg.t === 'act' ? act(g, me.uid, msg.action, now) : takeLoan(g, me.uid, Number(msg.amount), now);
           if (msg.id) {
             this.s.recent.push(key);
             if (this.s.recent.length > RECENT_MAX) this.s.recent.splice(0, this.s.recent.length - RECENT_MAX);
@@ -165,38 +186,37 @@ export class Room extends DurableObject<Env> {
           if (msg.id) this.send(ws, { t: 'ack', id: msg.id });
           return;
         }
-        case 'ready':
-          return this.commit(setReady(g, me.uid, !!msg.ready));
-        case 'mode':
-          return this.commit(setSessionMode(g, me.uid, msg.mode));
+        case 'start_round':
+          return this.commit(startRound(g, me.uid, now));
+        case 'call_off':
+          return this.commit(callOff(g, me.uid, now));
+        case 'timer':
+          return this.commit(setTimer(g, me.uid, !!msg.on, now));
         case 'size':
           return this.commit(setTableSize(g, me.uid, Number(msg.size)));
-        case 'start':
-          return this.commit(start(g, me.uid, now));
-        case 'pick':
-          return this.commit(pickMode(g, me.uid, msg.mode, now));
+        case 'cut':
+          return this.commit(cut(g, me.uid, cutCount(Number(msg.at)), now));
         case 'deal':
           return this.commit(deal(g, me.uid, now));
-        case 'next':
-          return this.commit(nextHand(g, now));
         case 'leave': {
           const events = leave(g, me.uid, now);
           await this.commit(events);
           ws.close(CLOSE.LEFT, 'left');
           return;
         }
-        case 'close': {
-          const events = close(g, me.uid, now);
-          this.s.purgeAt = now + PURGE_AFTER_CLOSE_MS;
-          await this.commit(events);
-          for (const s of this.ctx.getWebSockets()) try { s.close(CLOSE.ROOM_CLOSED, 'closed'); } catch { /* ignore */ }
-          return;
+        case 'report': {
+          if (me.uid !== g.adminUid) return this.send(ws, { t: 'error', code: 'not_admin', message: 'Only the admin can export the settlement report.' });
+          const ledger = this.ctx.storage.sql.exec('SELECT * FROM ledger ORDER BY id').toArray() as unknown as Tx[];
+          return this.send(ws, { t: 'report', report: { ...sessionReport(g), ledger, code: this.s.code } });
         }
         default:
           return this.send(ws, { t: 'error', code: 'bad_message', message: 'Unknown message.' });
       }
     } catch (e) {
-      if (e instanceof GameError) return this.send(ws, { t: 'error', code: e.code, message: e.message, ref: msg.t === 'act' ? msg.id : undefined });
+      if (e instanceof GameError) {
+        const ref = msg.t === 'act' || msg.t === 'loan' ? msg.id : undefined;
+        return this.send(ws, { t: 'error', code: e.code, message: e.message, ref });
+      }
       console.error('room error', e);
       return this.send(ws, { t: 'error', code: 'server_error', message: 'Something went wrong. Try again.' });
     }
@@ -225,9 +245,9 @@ export class Room extends DurableObject<Env> {
     const b = this.buckets.get(ws) ?? { tokens: MAX_MSGS_PER_SEC, at: now };
     b.tokens = Math.min(MAX_MSGS_PER_SEC, b.tokens + ((now - b.at) / 1000) * MAX_MSGS_PER_SEC);
     b.at = now;
-    if (b.tokens < 1) { this.buckets.set(ws, b); return false; }
-    b.tokens -= 1;
     this.buckets.set(ws, b);
+    if (b.tokens < 1) return false;
+    b.tokens -= 1;
     return true;
   }
 
@@ -236,46 +256,51 @@ export class Room extends DurableObject<Env> {
   async alarm(): Promise<void> {
     if (!this.s) return;
     const now = Date.now();
-    if (this.s.purgeAt && now >= this.s.purgeAt) {
+    if (this.expired()) {
       await this.ctx.storage.deleteAll();
       this.s = null;
       return;
     }
-    if (this.expired()) {
-      this.s.game.phase = 'closed';
-      this.s.purgeAt = now;
-      await this.persist();
-      await this.ctx.storage.setAlarm(now + 1000);
-      return;
-    }
-    await this.commit(onDeadline(this.s.game, now));
+    await this.commit(onDeadline(this.s.game, now, () => cutCount(Math.random())));
   }
 
   /* ---------------- internals ---------------- */
 
-  /** After any change: shuffle if the engine needs a deck, save, set the next alarm, and tell everyone. */
+  /** After any change: shuffle if needed, save the ledger and state, set the next alarm, tell everyone. */
   private async commit(events: GameEvent[]): Promise<void> {
     const s = this.s!;
-    if (needsDeck(s.game)) events = events.concat(await this.shuffleIn());
+    while (needsDeck(s.game)) events = events.concat(await this.shuffleIn());
     s.seq++;
+    this.flushLedger();
     await this.persist();
     await this.scheduleAlarm();
     this.broadcastState(events);
   }
 
-  /** Fresh 52-card deck, cryptographically shuffled here on the server. The fingerprint is published before the deal. */
+  /** §4 A fresh 52-card deck, shuffled here with unbiased crypto randomness. The fingerprint is published first. */
   private async shuffleIn(): Promise<GameEvent[]> {
     const deck = shuffle(freshDeck());
     const salt = randomHex(16);
     const commit = await sha256Hex(commitmentInput(deckString(deck), salt));
-    return prepareDeal(this.s!.game, deck, salt, commit, Date.now());
+    return prepareDeck(this.s!.game, deck, salt, commit, Date.now());
+  }
+
+  private flushLedger(): void {
+    const g = this.s!.game;
+    for (const t of g.outbox) {
+      this.ctx.storage.sql.exec(
+        'INSERT OR IGNORE INTO ledger (id, at, round, game, uid, name, type, amount, balance, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        t.id, t.at, t.round, t.game, t.uid, t.name, t.type, t.amount, t.balance, t.note ?? null,
+      );
+    }
+    g.outbox = [];
   }
 
   private async scheduleAlarm(): Promise<void> {
-    const s = this.s!;
-    const d = s.game.deadline;
+    const g = this.s!.game;
+    const d = g.deadline;
     const due = d ? d.at + (d.kind === 'turn' ? TURN_GRACE_MS : 0) : null;
-    const at = s.purgeAt ?? due ?? (s.game.phase === 'waiting' ? s.game.createdAt + ROOM_TTL_MS : null);
+    const at = due ?? (g.phase === 'lobby' && g.round === 0 ? g.createdAt + ROOM_TTL_MS : null);
     if (at) await this.ctx.storage.setAlarm(at);
     else await this.ctx.storage.deleteAlarm();
   }

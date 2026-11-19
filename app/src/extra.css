@@ -39,3 +39,75 @@ button.chip-tag b{color:var(--ivory)}
 .stepper{display:flex; gap:8px}
 .stepper button{width:44px; height:44px; border-radius:12px; background:var(--night-3); border:1px solid var(--line); font-size:22px; font-weight:800; color:var(--ivory)}
 .stepper button[disabled]{opacity:.3}
+
+/* ---------- Danka rules UI ---------- */
+.rules-card{display:flex; flex-direction:column; gap:3px; padding:12px 14px; border-radius:16px; background:var(--night-2); border:1px solid var(--line); font-size:12.5px; color:var(--muted)}
+.rules-card b{color:var(--brass-2); font-family:var(--display); font-size:15px}
+.tag.out{background:rgba(154,166,188,.18); color:var(--muted)}
+.seat.out{opacity:.35; filter:grayscale(1)}
+.tag .xb{margin-left:3px; min-width:14px; height:14px; border-radius:7px; background:#8DB6FF; color:#0B1220; font-size:9px; display:inline-grid; place-items:center}
+.co .owe{font-size:10px; color:var(--seen); font-family:var(--body)}
+.hand-no{display:flex; align-items:center; gap:6px}
+.clock{display:inline-flex; align-items:center; gap:3px; color:var(--ivory); font-weight:700}
+.clock svg{width:13px; height:13px; stroke:currentColor; fill:none; stroke-width:2.2}
+.clock.low{color:var(--alert); animation:dpulse 1s infinite}
+.wc-chip{font-family:var(--display); font-weight:800; font-size:12px; letter-spacing:.08em; color:#1A1206; background:linear-gradient(135deg,#F4A300,#E2B865); padding:4px 10px; border-radius:999px; box-shadow:0 0 18px rgba(244,163,0,.45); white-space:nowrap}
+
+/* the dealer's cut */
+.center.cutting{z-index:6}
+.cut-pad{position:relative; width:64px; height:100px; touch-action:none; cursor:ns-resize; border-radius:10px; animation:dpulse 1.2s infinite}
+.cut-pad .edge{position:absolute; left:6px; right:6px; height:8px; border-radius:3px; background:linear-gradient(180deg,#FFFBF2,#D9CCB0); box-shadow:0 1px 0 #9C6E22, 0 2px 3px rgba(0,0,0,.35); transition:opacity .1s}
+.cut-pad .cut-line{position:absolute; left:-10px; right:-10px; height:3px; background:var(--marigold); box-shadow:0 0 10px var(--marigold); border-radius:2px; transform:translateY(-1px)}
+.cut-pad .cut-hint{position:absolute; left:50%; bottom:-20px; transform:translateX(-50%); white-space:nowrap; font-size:11.5px; font-weight:800; color:var(--marigold)}
+.cut-pad.done{animation:none; opacity:.7}
+
+/* big moment banner: Well Cut, bonus, new round */
+.big-banner{position:absolute; left:50%; top:34%; z-index:58; transform:translate(-50%,-50%); min-width:250px; max-width:90%; text-align:center; padding:16px 20px; border-radius:22px;
+  background:rgba(6,10,18,.92); border:1.5px solid var(--marigold); box-shadow:0 0 50px rgba(244,163,0,.35), 0 20px 40px rgba(0,0,0,.6); pointer-events:none; animation:bannerIn .55s cubic-bezier(.2,1.5,.4,1)}
+.big-banner b{display:block; font-family:var(--display); font-size:32px; font-weight:800; letter-spacing:.06em; line-height:1.05;
+  background:linear-gradient(180deg,#FFF6DD,#F4A300); -webkit-background-clip:text; background-clip:text; color:transparent}
+.big-banner span{display:block; margin-top:6px; font-size:13px; color:var(--ivory)}
+.big-banner.round{border-color:var(--brass)}
+.big-banner.bonus{border-color:var(--win); box-shadow:0 0 60px rgba(47,191,113,.35), 0 20px 40px rgba(0,0,0,.6)}
+@keyframes bannerIn{from{transform:translate(-50%,-50%) scale(.5); opacity:0} to{transform:translate(-50%,-50%) scale(1); opacity:1}}
+.reduce .big-banner{animation:none}
+
+/* my hand: 1, 2 or 4 cards in Well Cut games */
+#my-cards.n1 .pc:nth-child(1){left:50px; transform:none}
+#my-cards.n2 .pc:nth-child(1){left:26px; transform:rotate(-6deg)}
+#my-cards.n2 .pc:nth-child(2){left:74px; transform:rotate(6deg)}
+.bank-btn{display:inline-flex; align-items:center; gap:4px; padding:5px 9px; border-radius:10px; background:rgba(255,181,71,.12); border:1px solid rgba(255,181,71,.45); color:var(--seen); font-size:11.5px; font-weight:800}
+.bank-btn svg{width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2}
+
+/* result */
+.bonus-line{margin:0 18px 10px; padding:10px 12px; border-radius:14px; background:rgba(47,191,113,.12); border:1px solid rgba(47,191,113,.5); display:flex; flex-direction:column; gap:2px; font-size:13px}
+.bonus-line b{color:var(--win); font-family:var(--display); font-size:16px}
+
+/* bank loan */
+.loan-amt{display:flex; align-items:baseline; justify-content:center; gap:6px; margin:6px 0}
+.loan-amt b{font-family:var(--display); font-size:48px; color:var(--marigold); line-height:1}
+.loan-amt small{color:var(--muted)}
+.loan-range{width:100%; accent-color:var(--marigold); height:32px}
+
+/* ledger */
+.ledger-item span b{color:var(--ivory)}
+.ledger-item .lbal{margin-left:auto; color:var(--muted); font-size:12px; flex:none}
+
+/* Placecut scorecard */
+.pc-stats{display:grid; grid-template-columns:repeat(5,1fr); gap:6px}
+.pc-stats div{background:var(--night-2); border:1px solid var(--line); border-radius:12px; padding:8px 4px; text-align:center}
+.pc-stats small{display:block; font-size:10px; color:var(--muted)}
+.pc-stats b{font-family:var(--display); font-size:18px}
+.scorecard{gap:6px}
+.score-row{display:flex; flex-direction:column; gap:8px; text-align:left; width:100%; padding:10px 12px; border-radius:16px; background:var(--night-2); border:1px solid var(--line)}
+.score-row.open{border-color:var(--brass)}
+.score-row.out{opacity:.6}
+.sr-top{display:flex; align-items:center; gap:10px}
+.sr-top .who{flex:1; display:flex; flex-direction:column; gap:2px; min-width:0}
+.sr-top .who small{font-size:11.5px; color:var(--muted)}
+.net{font-family:var(--display); font-size:20px; font-weight:800}
+.net.up{color:var(--win)} .net.down{color:#FF8A8E}
+.sr-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:4px 8px; font-size:11.5px; color:var(--muted)}
+.sr-grid b{display:block; color:var(--ivory); font-size:13px}
+.games-list{background:var(--night-2); border:1px solid var(--line); border-radius:16px; padding:10px 12px; font-size:13px}
+.games-list summary{cursor:pointer; font-weight:700; color:var(--brass-2)}

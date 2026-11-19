@@ -1,84 +1,48 @@
-import type { HandMode } from './hands';
-
 /**
- * House rules. Every field maps to an open question in the spec (Q1–Q12).
- * STAND_IN_RULES below are standard Teen Patti values so the game is playable;
- * replace them with the group's signed-off answers. Nothing else in the code
- * should hard-code a rule.
+ * DANKA CLUB house rules, as written by the group ("Complete Game Rules, Regulations &
+ * Developer Specification", sections 1–21). Every number in the game comes from here.
  */
-export interface HouseRules {
-  /** Q5 Coins every player puts in before the deal. Also the opening blind stake. */
-  boot: number;
-  /** Q5 A Seen player stakes this multiple of the current blind stake. */
-  seenMultiplier: number;
-  /** Q5 Highest blind stake allowed, as a multiple of the boot. */
-  stakeCapMultiple: number;
-  /** Q5 Maximum consecutive blind turns per player; null = unlimited. */
-  maxBlindTurns: number | null;
-  /** Fewest seated players needed to start (the original spec said exactly 7; the group asked for 2+). */
+export interface DankaRules {
+  /** §2 Minimum and maximum active players. */
   minPlayers: number;
-  /** Players may join a game already in progress; they are dealt in from the next hand. Never in Tournament Night. */
-  lateJoin: boolean;
-  /** Q1 Cards per player in Classic. (The spec's "random card count" is still undefined.) */
-  cardsPerPlayer: 3;
-  /** Q6 Show is only allowed when exactly two players remain. */
-  showOnlyWithTwo: boolean;
-  /** Q6 Who wins a Show between equal hands. */
-  showTie: 'requester_loses';
-  /** Q8 Coins each player starts the session with. */
+  maxPlayers: number;
+  /** §3 Coins each player receives when they join. */
   startingCoins: number;
-  /** Q9 Whether the bank lends coins, how much per loan, and when a loan is given automatically. */
-  loansAllowed: boolean;
-  loanAmount: number;
-  /** A loan is added at the start of a hand when coins fall below boot × this. */
-  loanBelowBootMultiple: number;
-  /** Q10 Seconds per turn before the player packs automatically. */
+  /** §13 Maximum cumulative bank loan per player. */
+  maxLoan: number;
+  /** §7 Cost of one Blind action and one Seen action. There is no Chaal. */
+  blindCost: number;
+  seenCost: number;
+  /** §10 Cost of a Sideshow request. */
+  sideshowCost: number;
+  /** §9 Extra Blind actions allowed once every other active player is Seen. */
+  extraBlindActions: number;
+  /** Cards per player in a normal game. */
+  normalCards: number;
+  /** §5 Cards per player in the four compulsory Well Cut games. */
+  wellCutSequence: number[];
+  /** §14 Length of a round before Placecut. */
+  roundMinutes: number;
+  /** Turn timer, used only when the admin switches it on (off by default). On time-out the player packs. */
   turnSeconds: number;
-  /** Seconds the dealer has to start the deal before it happens automatically. */
-  autoDealSeconds: number;
-  /** Seconds the dealer has to pick the game in Dealer's Choice. */
-  pickSeconds: number;
-  /** Seconds between the end of one hand and the start of the next. */
-  nextHandSeconds: number;
+  /** Pause between the end of one game and the start of the next. */
+  nextGameSeconds: number;
 }
 
-export const STAND_IN_RULES: Readonly<HouseRules> = Object.freeze({
-  boot: 10,
+export const DANKA_RULES: Readonly<DankaRules> = Object.freeze({
   minPlayers: 2,
-  lateJoin: true,
-  seenMultiplier: 2,
-  stakeCapMultiple: 64,
-  maxBlindTurns: null,
-  cardsPerPlayer: 3,
-  showOnlyWithTwo: true,
-  showTie: 'requester_loses',
-  startingCoins: 1000,
-  loansAllowed: true,
-  loanAmount: 500,
-  loanBelowBootMultiple: 6,
-  turnSeconds: 20,
-  autoDealSeconds: 8,
-  pickSeconds: 10,
-  nextHandSeconds: 9,
+  maxPlayers: 7,
+  startingCoins: 100,
+  maxLoan: 100,
+  blindCost: 1,
+  seenCost: 2,
+  sideshowCost: 2,
+  extraBlindActions: 3,
+  normalCards: 3,
+  wellCutSequence: [4, 3, 2, 1],
+  roundMinutes: 20,
+  turnSeconds: 30,
+  nextGameSeconds: 8,
 });
-
-/** How a whole session is played. */
-export type SessionMode = HandMode | 'dealers' | 'tour';
-
-export const SESSION_MODES: readonly SessionMode[] = ['classic', 'muflis', 'ak47', 'joker', 'four', 'dealers', 'tour'];
-export const HAND_MODES: readonly HandMode[] = ['classic', 'muflis', 'ak47', 'joker', 'four'];
-
-export const MODE_NAMES: Record<SessionMode, string> = {
-  classic: 'Classic Danka',
-  muflis: 'Muflis',
-  ak47: 'AK47',
-  joker: 'Joker Draw',
-  four: 'Best of Four',
-  dealers: "Dealer's Choice",
-  tour: 'Tournament Night',
-};
-
-/** Tournament Night: the boot doubles every 2 hands, and there are no loans. */
-export const tournamentBoot = (rules: HouseRules, hand: number): number => rules.boot * 2 ** Math.floor((hand - 1) / 2);
 
 export const MAX_SEATS = 7;

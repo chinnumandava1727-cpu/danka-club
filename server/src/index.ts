@@ -1,4 +1,3 @@
-import { SESSION_MODES, type SessionMode } from '@danka/engine';
 import { AuthError, authenticate, bearer } from './auth';
 import { generateRoomCode, isValidCode, normaliseCode } from './codes';
 import { invitePage } from './invite';
@@ -11,6 +10,9 @@ export interface Env {
   ASSETS: Fetcher;
   AUTH_MODE: string;
   FIREBASE_PROJECT_ID: string;
+  /** Test only, honoured when AUTH_MODE is "dev": shorter rounds and pauses for the bot simulation. */
+  DEV_ROUND_SECONDS?: string;
+  DEV_NEXT_GAME_SECONDS?: string;
 }
 
 const CORS = {
@@ -38,16 +40,15 @@ export default {
 
       if (parts[0] !== 'api') return env.ASSETS ? env.ASSETS.fetch(req) : new Response('DANKA CLUB room server', { headers: CORS });
 
-      // POST /api/rooms  { mode }  → { code }
+      // POST /api/rooms  { seats }  → { code }
       if (parts[1] === 'rooms' && parts.length === 2 && req.method === 'POST') {
         const me = await authenticate(bearer(req), env);
-        const body = (await req.json().catch(() => ({}))) as { mode?: SessionMode; seats?: number };
-        const mode = body.mode && SESSION_MODES.includes(body.mode) ? body.mode : 'classic';
+        const body = (await req.json().catch(() => ({}))) as { seats?: number };
         for (let attempt = 0; attempt < 5; attempt++) {
           const code = generateRoomCode();
           const res = await roomStub(env, code).fetch('https://room/init', {
             method: 'POST',
-            body: JSON.stringify({ code, mode, uid: me.uid, name: me.name, seats: Number(body.seats) || 7 }),
+            body: JSON.stringify({ code, uid: me.uid, name: me.name, seats: Number(body.seats) || 7 }),
           });
           if (res.status === 409) continue; // code already taken: try another
           return json({ code, joinUrl: `${url.origin}/j/${code}` }, 201);

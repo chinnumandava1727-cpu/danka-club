@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MODE_NAMES, SESSION_MODES, type SessionMode } from '@danka/engine';
 import { loadMe, saveMe, tokenFor, type Me } from './lib/identity';
 import { createRoom, roomInfo } from './lib/net';
 import { ensureAudio, play } from './lib/sound';
@@ -17,7 +16,6 @@ export function App() {
   const [me, setMe] = useState<Me | null>(loadMe());
   const [screen, setScreen] = useState<'home' | 'join' | 'room'>('home');
   const [code, setCode] = useState<string | null>(null);
-  const [mode, setMode] = useState<SessionMode>(() => (localStorage.getItem('danka-mode') as SessionMode) || 'classic');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -52,7 +50,7 @@ export function App() {
     play('tap'); buzz(HAP.click); setBusy(true);
     try { localStorage.setItem('danka-seats', String(seats)); } catch { /* ignore */ }
     try {
-      enterRoom(await createRoom(tokenFor(me), mode, seats));
+      enterRoom(await createRoom(tokenFor(me), seats));
     } catch (e) {
       play('error'); buzz(HAP.error); showToast((e as Error).message);
     } finally {
@@ -64,8 +62,7 @@ export function App() {
     <div id="app">
       {!me && <NameScreen onDone={(name) => { const m = saveMe(name); setMe(m); if (prefill.current) setScreen('join'); }} />}
       {me && screen === 'home' && (
-        <Home me={me} mode={mode} busy={busy}
-          onMode={(m) => { setMode(m); localStorage.setItem('danka-mode', m); }}
+        <Home me={me} busy={busy}
           onCreate={onCreate}
           onJoin={() => { play('tap'); buzz(HAP.tick); setScreen('join'); }}
           onSettings={() => { play('tap'); setSettingsOpen(true); }}
@@ -109,8 +106,7 @@ function NameScreen({ onDone }: { onDone: (name: string) => void }) {
   );
 }
 
-function Home(p: { me: Me; mode: SessionMode; busy: boolean; onMode: (m: SessionMode) => void; onCreate: (seats: number) => void; onJoin: () => void; onSettings: () => void; onRename: () => void }) {
-  const [modesOpen, setModesOpen] = useState(false);
+function Home(p: { me: Me; busy: boolean; onCreate: (seats: number) => void; onJoin: () => void; onSettings: () => void; onRename: () => void }) {
   const [sizeOpen, setSizeOpen] = useState(false);
   const last = Number(localStorage.getItem('danka-seats')) || 7;
   return (
@@ -129,19 +125,19 @@ function Home(p: { me: Me; mode: SessionMode; busy: boolean; onMode: (m: Session
           <span className="t-ic"><Icon name="enter" /></span>
           <span><b>Join Room</b><span>Enter the 6-character code from WhatsApp</span></span>
         </button>
-        <div className="mini-tiles" style={{ gridTemplateColumns: '1fr' }}>
-          <button className="mtile" onClick={() => { play('tap'); setModesOpen(true); }}><small>Game mode for new rooms</small><b>{MODE_NAMES[p.mode]}</b></button>
+        <div className="rules-card">
+          <b>House rules</b>
+          <span>100 coins each · Blind 1 · Seen 2 · Bank loan up to 100</span>
+          <span>Well Cut → 4 games of 4, 3, 2, 1 cards · 20-minute rounds</span>
         </div>
       </div>
       <p className="fine">Coins have no cash value.</p>
-      <div className={`scrim${modesOpen ? ' on' : ''}`} onClick={() => setModesOpen(false)} />
-      <ModeSheet open={modesOpen} current={p.mode} onPick={(m) => { p.onMode(m); play('chime'); buzz(HAP.click); setModesOpen(false); }} />
       <div className={`scrim${sizeOpen ? ' on' : ''}`} onClick={() => setSizeOpen(false)} />
       <div className={`sheet${sizeOpen ? ' on' : ''}`} role="dialog" aria-label="How many players?">
         <div className="grab" />
         <h3>How many players?</h3>
         <div className="sheet-body">
-          <p className="note" style={{ margin: '0 0 12px' }}>The room fills to this many seats. You can change it in the waiting room, or start early and let latecomers join from the next hand.</p>
+          <p className="note" style={{ margin: '0 0 12px' }}>The room holds this many seats. You can change it in the waiting room. Latecomers join at Placecut, between rounds.</p>
           <div className="size-grid">
             {[2, 3, 4, 5, 6, 7].map((n) => (
               <button key={n} className={`size-btn${n === last ? ' on' : ''}`} disabled={p.busy} onClick={() => { setSizeOpen(false); p.onCreate(n); }}>
@@ -149,40 +145,9 @@ function Home(p: { me: Me; mode: SessionMode; busy: boolean; onMode: (m: Session
               </button>
             ))}
           </div>
-          <p className="note" style={{ marginTop: 12 }}>Game: <b style={{ color: 'var(--marigold)' }}>{MODE_NAMES[p.mode]}</b> · change it with the Game mode tile.</p>
         </div>
       </div>
     </section>
-  );
-}
-
-export const MODE_DESC: Record<SessionMode, [string, string]> = {
-  classic: ['CL', 'Your house rules. For now: standard Teen Patti as a stand-in.'],
-  muflis: ['LO', 'Lowest hand wins. A trail is the worst hand you can hold.'],
-  ak47: ['47', 'Every Ace, King, 4 and 7 is a joker.'],
-  joker: ['J★', 'The server draws one wild rank each hand.'],
-  four: ['4→3', 'You get 4 cards and play your best 3.'],
-  dealers: ['DC', "Each hand's dealer picks one of the five games above."],
-  tour: ['♛', 'No loans. The boot doubles every 2 hands. Last player with coins wins.'],
-};
-
-export function ModeSheet({ open, current, onPick, modes = SESSION_MODES, title = 'Game modes' }: { open: boolean; current: string | null; onPick: (m: SessionMode) => void; modes?: readonly SessionMode[]; title?: string }) {
-  return (
-    <div className={`sheet${open ? ' on' : ''}`} role="dialog" aria-label={title}>
-      <div className="grab" />
-      <h3>{title}</h3>
-      <div className="sheet-body">
-        <div className="mode-list">
-          {modes.map((k) => (
-            <button key={k} className={`mode-card${k === current ? ' on' : ''}`} onClick={() => onPick(k)}>
-              <span className="mi">{MODE_DESC[k][0]}</span>
-              <span className="mt"><b>{MODE_NAMES[k]}</b><span>{MODE_DESC[k][1]}</span></span>
-              <span className="ck" />
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -202,9 +167,8 @@ function Join({ prefill, onBack, onJoined }: { prefill: string; onBack: () => vo
     const r = await roomInfo(v);
     setBusy(false);
     if (!r.ok) return fail(r.message);
-    if (r.info.closed) return fail('That room has been closed.');
-    if (r.info.full) return fail(`That table is full (${r.info.tableSize}/${r.info.tableSize}). Ask the admin to add a seat.`);
     if (r.info.expired) return fail('That room code has expired. Ask for a new one.');
+    // Full tables and running rounds are checked when you connect: players already seated can always come back.
     play('tap'); buzz(HAP.click);
     onJoined(v);
   };
