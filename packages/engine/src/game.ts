@@ -594,6 +594,9 @@ export interface PlayerView {
   stake: number;
   cap: number;
   pot: number;
+  /** A Seen player stakes this multiple of the blind stake. */
+  seenMultiplier: number;
+  turnSeconds: number;
   seats: SeatView[];
   commit: string | null;
   result: HandResult | null;
@@ -641,6 +644,8 @@ export function viewFor(st: GameState, uid: string, ledgerTail = 60): PlayerView
     stake: st.stake,
     cap: stakeCap(st),
     pot: st.pot,
+    seenMultiplier: st.rules.seenMultiplier,
+    turnSeconds: st.rules.turnSeconds,
     seats,
     commit: st.commit,
     result: over ? st.result : null,

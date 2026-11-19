@@ -9,10 +9,18 @@
     "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  // The web game (app/dist) is served from the same address. API and invite links run the Worker first.
+  "assets": {
+    "directory": "../app/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/j/*"]
+  },
   "vars": {
-    // "dev" accepts tokens like dev:<uid>:<name> for local testing.
-    // Set to "firebase" and fill FIREBASE_PROJECT_ID before deploying.
-    "AUTH_MODE": "dev",
+    // "guest": phones send guest:<random id>:<name> (test phase, no sign-in).
+    // "dev": also accepts short ids, for the local bot simulation.
+    // "firebase": Google sign-in; fill FIREBASE_PROJECT_ID.
+    "AUTH_MODE": "guest",
     "FIREBASE_PROJECT_ID": ""
   },
   "observability": { "enabled": true }

@@ -22,10 +22,15 @@ const FIREBASE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/ser
  */
 export async function authenticate(token: string | null, env: AuthEnv): Promise<Identity> {
   if (!token) throw new AuthError('Sign in first.');
-  if (env.AUTH_MODE === 'dev') {
-    const m = /^dev:([A-Za-z0-9_-]{1,40}):(.{1,24})$/.exec(token);
-    if (!m) throw new AuthError('Bad dev token. Use dev:<uid>:<name>.');
-    return { uid: `dev_${m[1]}`, name: decodeURIComponent(m[2]) };
+  if (env.AUTH_MODE === 'dev' || env.AUTH_MODE === 'guest') {
+    // guest:<id>:<name>. The id is a long random value kept on the phone, so nobody can guess another player's seat.
+    const m = /^(dev|guest):([A-Za-z0-9_-]{1,64}):(.{1,160})$/.exec(token);
+    if (!m) throw new AuthError('Bad sign-in token.');
+    const [, kind, id, rawName] = m;
+    if (env.AUTH_MODE === 'guest' && (kind !== 'guest' || id.length < 16)) throw new AuthError('Bad sign-in token.');
+    let name: string;
+    try { name = decodeURIComponent(rawName); } catch { name = rawName; }
+    return { uid: `${kind}_${id}`, name: name.trim().slice(0, 24) || 'Player' };
   }
   if (env.AUTH_MODE !== 'firebase' || !env.FIREBASE_PROJECT_ID) throw new AuthError('Server sign-in is not configured.');
   try {

@@ -1,0 +1,19 @@
+/* additions for the live client */
+#root{height:100%}
+.field-label{font-size:13px; font-weight:700; color:var(--muted)}
+.text-input{height:56px; border-radius:16px; background:var(--night-3); border:1.5px solid var(--line); color:var(--ivory); font-size:20px; font-family:var(--display); font-weight:700; padding:0 16px}
+.text-input:focus{outline:none; border-color:var(--marigold); box-shadow:0 0 0 3px rgba(244,163,0,.18)}
+button.chip-tag{background:none; cursor:pointer}
+button.chip-tag b{color:var(--ivory)}
+.status-banner{position:absolute; left:12px; right:12px; top:62px; z-index:65; background:#3A2A12; border:1px solid var(--brass); color:var(--ivory); font-size:13px; font-weight:700; padding:10px 14px; border-radius:14px; text-align:center; animation:pop .3s}
+.center-msg{margin:auto; display:flex; flex-direction:column; align-items:center; gap:16px; color:var(--muted)}
+.spinner{width:44px; height:44px; border-radius:50%; border:4px solid var(--night-3); border-top-color:var(--marigold); animation:spin 0.9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#show-ov{pointer-events:none}
+.tile[disabled]{opacity:.6}
+.icon-btn svg{width:22px; height:22px; stroke:var(--ivory); fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round}
+.btn svg{width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round}
+.mode-row{width:100%; color:inherit}
+.verify code{display:block; margin-top:2px}
+#result{overflow-y:auto}
+.verify code{max-height:66px; overflow:auto}

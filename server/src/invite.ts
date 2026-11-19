@@ -4,8 +4,9 @@ export function invitePage(code: string | null): string {
   const body = code
     ? `<p class="lead">You're invited to a private table.</p>
        <div class="code">${code}</div>
-       <a class="btn" href="dankaclub://join/${code}">Open in DANKA CLUB</a>
-       <p class="small">If the app doesn't open, open DANKA CLUB, tap <b>Join Room</b> and type the code above.</p>`
+       <a class="btn" href="/?join=${code}">Play now</a>
+       <a class="btn ghost" href="dankaclub://join/${code}">Open in the Android app</a>
+       <p class="small">Or open DANKA CLUB, tap <b>Join Room</b> and type the code above.</p>`
     : `<p class="lead">This invite link isn't valid. Ask your friend to share the room code again.</p>`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title}</title>
@@ -17,8 +18,9 @@ h1{font-size:34px;letter-spacing:.06em;margin:0 0 8px;color:#E2B865}
 .lead{color:#9AA6BC;margin:0 0 20px}
 .code{font-size:44px;font-weight:800;letter-spacing:.14em;color:#F4A300;margin:0 0 22px}
 .btn{display:block;padding:16px;border-radius:16px;background:linear-gradient(135deg,#F4A300,#C8963E);color:#1A1206;font-weight:800;text-decoration:none}
+.btn.ghost{margin-top:10px;background:transparent;border:1.5px solid #26324A;color:#F5EFE3}
 .small{font-size:13px;color:#9AA6BC;margin-top:18px;line-height:1.5}
 </style></head><body><main><h1>DANKA CLUB</h1>${body}<p class="small">Coins have no cash value.</p></main>
-${code ? `<script>setTimeout(function(){location.href="dankaclub://join/${code}"},300)</script>` : ''}
+
 </body></html>`;
 }

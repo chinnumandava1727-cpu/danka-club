@@ -8,6 +8,7 @@ export { Room };
 
 export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
+  ASSETS: Fetcher;
   AUTH_MODE: string;
   FIREBASE_PROJECT_ID: string;
 }
@@ -35,7 +36,7 @@ export default {
         return new Response(invitePage(isValidCode(code) ? code : null), { headers: { 'content-type': 'text/html; charset=utf-8' } });
       }
 
-      if (parts[0] !== 'api') return new Response('DANKA CLUB room server', { headers: CORS });
+      if (parts[0] !== 'api') return env.ASSETS ? env.ASSETS.fetch(req) : new Response('DANKA CLUB room server', { headers: CORS });
 
       // POST /api/rooms  { mode }  → { code }
       if (parts[1] === 'rooms' && parts.length === 2 && req.method === 'POST') {

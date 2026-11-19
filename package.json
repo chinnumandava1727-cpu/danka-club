@@ -5,12 +5,14 @@
   "description": "DANKA CLUB: private 7-player Danka card game. Rules engine + Cloudflare room server.",
   "workspaces": [
     "packages/*",
-    "server"
+    "server",
+    "app"
   ],
   "scripts": {
     "test": "npm run test -w @danka/engine",
-    "typecheck": "npm run typecheck -w @danka/engine && npm run typecheck -w @danka/server",
+    "typecheck": "npm run typecheck -w @danka/engine && npm run typecheck -w @danka/server && npm run typecheck -w @danka/app",
     "dev": "npm run dev -w @danka/server",
-    "sim": "npm run sim -w @danka/server"
+    "sim": "npm run sim -w @danka/server",
+    "build": "npm run build -w @danka/app"
   }
 }
