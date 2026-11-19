@@ -38,6 +38,7 @@ export type GameEvent =
   | { e: 'left'; seat: number; name: string }
   | { e: 'ready'; seat: number; ready: boolean }
   | { e: 'session_mode'; mode: SessionMode }
+  | { e: 'table_size'; size: number }
   | { e: 'started' }
   | { e: 'hand'; hand: number; boot: number }
   | { e: 'picking'; dealer: number }
@@ -99,6 +100,8 @@ export interface GameState {
   phase: Phase;
   createdAt: number;
   adminUid: string;
+  /** Seats at this table, chosen by the creator (2–7). The room is full when all are taken. */
+  tableSize: number;
   seats: Seat[];
   hand: number;
   handMode: HandMode;
@@ -193,7 +196,10 @@ function setTurn(st: GameState, i: number, now: number, ev: GameEvent[]): void {
 /* room lifecycle                                                      */
 /* ------------------------------------------------------------------ */
 
-export function createGame(opts: { rules: HouseRules; sessionMode: SessionMode; admin: { uid: string; name: string }; now: number }): GameState {
+export const clampTableSize = (rules: HouseRules, n: number | undefined): number =>
+  Math.max(rules.minPlayers, Math.min(MAX_SEATS, Math.round(Number.isFinite(n) ? (n as number) : MAX_SEATS)));
+
+export function createGame(opts: { rules: HouseRules; sessionMode: SessionMode; admin: { uid: string; name: string }; now: number; tableSize?: number }): GameState {
   if (!SESSION_MODES.includes(opts.sessionMode)) fail('bad_mode', 'Unknown game mode.');
   const st: GameState = {
     v: 1,
@@ -202,6 +208,7 @@ export function createGame(opts: { rules: HouseRules; sessionMode: SessionMode; 
     phase: 'waiting',
     createdAt: opts.now,
     adminUid: opts.admin.uid,
+    tableSize: clampTableSize(opts.rules, opts.tableSize),
     seats: [],
     hand: 0,
     handMode: 'classic',
@@ -231,7 +238,7 @@ export function join(st: GameState, uid: string, name: string, now: number): { s
     return { seat: existing, events: [{ e: 'joined', seat: existing, name: st.seats[existing].name, rejoined: true }] };
   }
   if (st.phase === 'closed' || st.phase === 'session_over') fail('room_closed', 'This room has been closed.');
-  if (st.seats.length >= MAX_SEATS) fail('room_full', 'This room is full (7/7).');
+  if (st.seats.length >= st.tableSize) fail('room_full', `This table is full (${st.tableSize}/${st.tableSize}).`);
   const started = st.phase !== 'waiting';
   if (started && (!st.rules.lateJoin || st.sessionMode === 'tour')) fail('game_started', 'This game has already started.');
   const clean = name.trim().slice(0, 24) || `Player ${st.seats.length + 1}`;
@@ -270,6 +277,16 @@ export function setSessionMode(st: GameState, uid: string, mode: SessionMode): G
   if (!SESSION_MODES.includes(mode)) fail('bad_mode', 'Unknown game mode.');
   st.sessionMode = mode;
   return [{ e: 'session_mode', mode }];
+}
+
+/** The admin changes how many seats the table has: in the waiting room or between hands, never below the players already seated. */
+export function setTableSize(st: GameState, uid: string, size: number): GameEvent[] {
+  if (uid !== st.adminUid) fail('not_admin', 'Only the admin can change the table size.');
+  if (!(st.phase === 'waiting' || st.phase === 'hand_over')) fail('hand_in_progress', 'Change the table size between hands.');
+  const n = clampTableSize(st.rules, size);
+  if (n < st.seats.length) fail('too_small', `${st.seats.length} players are already seated.`);
+  st.tableSize = n;
+  return [{ e: 'table_size', size: n }];
 }
 
 export function start(st: GameState, uid: string, now: number): GameEvent[] {
@@ -654,7 +671,7 @@ export function viewFor(st: GameState, uid: string, ledgerTail = 60): PlayerView
     seenMultiplier: st.rules.seenMultiplier,
     turnSeconds: st.rules.turnSeconds,
     minPlayers: st.rules.minPlayers,
-    maxSeats: MAX_SEATS,
+    maxSeats: st.tableSize,
     waitingForNextHand: !!mine && !mine.out && mine.cards.length === 0 && (st.phase === 'betting' || st.phase === 'hand_over' || (st.phase === 'dealing' && st.commit !== null)),
     seats,
     commit: st.commit,

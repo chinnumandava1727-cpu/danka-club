@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   GameError, STAND_IN_RULES, act, activeSeats, commitmentInput, createGame, deal, deckString, freshDeck,
-  join, nextHand, onDeadline, parseCard, pickMode, prepareDeal, setReady, sha256Hex, shuffle, start,
+  join, nextHand, onDeadline, setTableSize, parseCard, pickMode, prepareDeal, setReady, sha256Hex, shuffle, start,
   type Card, type GameState, type SessionMode, viewFor, verifyCommitment,
 } from '../src';
 
@@ -104,6 +104,17 @@ describe('rooms', () => {
     await shuffleIn(st);
     expect(st.seats[2].cards).toHaveLength(3);
     expect(st.seats[2].status).toBe('in');
+  });
+
+  it('fills only the table size the creator chose', () => {
+    const st = createGame({ rules: { ...STAND_IN_RULES }, sessionMode: 'classic', admin: { uid: 'a', name: 'Rc' }, now, tableSize: 3 });
+    join(st, 'b', 'B', now); join(st, 'c', 'C', now);
+    expectCode(() => join(st, 'd', 'D', now), 'room_full');
+    expectCode(() => setTableSize(st, 'b', 5), 'not_admin');
+    expectCode(() => setTableSize(st, 'a', 2), 'too_small');
+    setTableSize(st, 'a', 4);
+    expect(join(st, 'd', 'D', now).seat).toBe(3);
+    expect(createGame({ rules: { ...STAND_IN_RULES }, sessionMode: 'classic', admin: { uid: 'x', name: 'X' }, now, tableSize: 12 }).tableSize).toBe(7);
   });
 
   it('does not allow late joining in Tournament Night', async () => {

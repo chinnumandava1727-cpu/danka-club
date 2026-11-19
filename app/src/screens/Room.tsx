@@ -279,7 +279,10 @@ function Lobby({ view, code, client, toast, onExit, onSettings }: { view: Player
   const isAdmin = !!me?.isAdmin;
   const n = view.seats.length;
   const min = view.minPlayers;
+  const size = view.maxSeats;
+  const full = n >= size;
   const allReady = n >= min && view.seats.every((s) => s.ready);
+  const setSize = (v: number) => { client.send({ t: 'size', size: v }); play('tick'); buzz(HAP.tick); };
   const link = `${SERVER}/j/${code}`;
   const share = async () => {
     const text = `Join my DANKA CLUB table! Room code: ${code}`;
@@ -300,13 +303,22 @@ function Lobby({ view, code, client, toast, onExit, onSettings }: { view: Player
         <div><small>Room code</small><div className="room-code">{code}</div></div>
         <button className="btn line" style={{ height: 46 }} onClick={share}><Icon name="share" />Invite</button>
       </div>
-      <div className="lobby-status"><span>{n < min ? `Waiting for at least ${min} players` : allReady ? `${n} players ready. Start now or wait for more.` : 'Tap ready when you are set.'}</span><b className="num">{n}/7</b></div>
-      <div className="progress"><i style={{ width: `${(n / 7) * 100}%` }} /></div>
+      <div className="lobby-status"><span>{!full ? `Waiting for ${size - n} more player${size - n === 1 ? '' : 's'}` : allReady ? `All ${n} ready` : 'Table full. Tap ready.'}</span><b className="num">{n}/{size}</b></div>
+      <div className="progress"><i style={{ width: `${(n / size) * 100}%` }} /></div>
+      {isAdmin && (
+        <div className="size-row">
+          <span><small>Table size</small><b>{size} players</b></span>
+          <span className="stepper">
+            <button aria-label="One seat fewer" disabled={size <= Math.max(min, n)} onClick={() => setSize(size - 1)}>−</button>
+            <button aria-label="One seat more" disabled={size >= 7} onClick={() => setSize(size + 1)}>+</button>
+          </span>
+        </div>
+      )}
       <button className="mode-row" onClick={() => { if (!isAdmin) { play('error'); toast('Only the admin can change the game mode'); return; } play('tap'); setModes(true); }}>
         <span><small>{isAdmin ? 'Game mode · tap to change' : 'Game mode · set by the admin'}</small><b>{MODE_NAMES[view.sessionMode]}</b></span><Icon name="chevron" />
       </button>
       <div className="seat-list">
-        {Array.from({ length: 7 }, (_, i) => {
+        {Array.from({ length: size }, (_, i) => {
           const s = view.seats[i];
           if (!s) return <div key={i} className="lrow empty"><span className="ord">#{i + 1}</span>Open seat</div>;
           return (
@@ -320,11 +332,11 @@ function Lobby({ view, code, client, toast, onExit, onSettings }: { view: Player
           );
         })}
       </div>
-      <p className="rule-note">Start with 2 to 7 players. Seat #1 deals game 1, then each winner deals. Friends can still join after the game starts and play from the next hand.</p>
+      <p className="rule-note">Seat #1 deals game 1, then each winner deals. If someone is late, start without them: they can join any time and play from the next hand.</p>
       <div className="lobby-actions">
         <button className="btn line" onClick={() => { client.send({ t: 'ready', ready: !me?.ready }); play('clink'); buzz(HAP.click); }}>{me?.ready ? 'Not ready' : "I'm ready"}</button>
         {isAdmin
-          ? <button className="btn gold" disabled={!view.options.start} onClick={() => { client.send({ t: 'start' }); }}>{n >= min ? `Start with ${n}` : 'Start game'}</button>
+          ? <button className="btn gold" disabled={!view.options.start} onClick={() => { client.send({ t: 'start' }); }}>{full ? 'Start game' : n >= min ? `Start with ${n} of ${size}` : 'Start game'}</button>
           : <button className="btn gold" disabled>Admin starts</button>}
       </div>
       <div className={`scrim${modes ? ' on' : ''}`} onClick={() => setModes(false)} />

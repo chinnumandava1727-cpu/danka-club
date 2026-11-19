@@ -47,11 +47,12 @@ export function App() {
     history.replaceState(null, '', location.pathname);
   };
 
-  const onCreate = async () => {
+  const onCreate = async (seats: number) => {
     if (!me || busy) return;
-    play('tap'); buzz(HAP.tick); setBusy(true);
+    play('tap'); buzz(HAP.click); setBusy(true);
+    try { localStorage.setItem('danka-seats', String(seats)); } catch { /* ignore */ }
     try {
-      enterRoom(await createRoom(tokenFor(me), mode));
+      enterRoom(await createRoom(tokenFor(me), mode, seats));
     } catch (e) {
       play('error'); buzz(HAP.error); showToast((e as Error).message);
     } finally {
@@ -108,8 +109,10 @@ function NameScreen({ onDone }: { onDone: (name: string) => void }) {
   );
 }
 
-function Home(p: { me: Me; mode: SessionMode; busy: boolean; onMode: (m: SessionMode) => void; onCreate: () => void; onJoin: () => void; onSettings: () => void; onRename: () => void }) {
+function Home(p: { me: Me; mode: SessionMode; busy: boolean; onMode: (m: SessionMode) => void; onCreate: (seats: number) => void; onJoin: () => void; onSettings: () => void; onRename: () => void }) {
   const [modesOpen, setModesOpen] = useState(false);
+  const [sizeOpen, setSizeOpen] = useState(false);
+  const last = Number(localStorage.getItem('danka-seats')) || 7;
   return (
     <section className="screen" id="home" aria-label="Home">
       <div className="home-top">
@@ -118,7 +121,7 @@ function Home(p: { me: Me; mode: SessionMode; busy: boolean; onMode: (m: Session
       </div>
       <div className="logo"><Logo /><h1>DANKA CLUB</h1><p>Your table. Your seven.</p></div>
       <div className="tiles">
-        <button className="tile primary" onClick={p.onCreate} disabled={p.busy}>
+        <button className="tile primary" onClick={() => { play('tap'); buzz(HAP.tick); setSizeOpen(true); }} disabled={p.busy}>
           <span className="t-ic"><Icon name="plus" /></span>
           <span><b>{p.busy ? 'Creating…' : 'Create Room'}</b><span>You enter first, so you deal game 1</span></span>
         </button>
@@ -133,6 +136,22 @@ function Home(p: { me: Me; mode: SessionMode; busy: boolean; onMode: (m: Session
       <p className="fine">Coins have no cash value.</p>
       <div className={`scrim${modesOpen ? ' on' : ''}`} onClick={() => setModesOpen(false)} />
       <ModeSheet open={modesOpen} current={p.mode} onPick={(m) => { p.onMode(m); play('chime'); buzz(HAP.click); setModesOpen(false); }} />
+      <div className={`scrim${sizeOpen ? ' on' : ''}`} onClick={() => setSizeOpen(false)} />
+      <div className={`sheet${sizeOpen ? ' on' : ''}`} role="dialog" aria-label="How many players?">
+        <div className="grab" />
+        <h3>How many players?</h3>
+        <div className="sheet-body">
+          <p className="note" style={{ margin: '0 0 12px' }}>The room fills to this many seats. You can change it in the waiting room, or start early and let latecomers join from the next hand.</p>
+          <div className="size-grid">
+            {[2, 3, 4, 5, 6, 7].map((n) => (
+              <button key={n} className={`size-btn${n === last ? ' on' : ''}`} disabled={p.busy} onClick={() => { setSizeOpen(false); p.onCreate(n); }}>
+                <b>{n}</b><span className="seats-dots">{Array.from({ length: n }, (_, i) => <i key={i} />)}</span><small>players</small>
+              </button>
+            ))}
+          </div>
+          <p className="note" style={{ marginTop: 12 }}>Game: <b style={{ color: 'var(--marigold)' }}>{MODE_NAMES[p.mode]}</b> · change it with the Game mode tile.</p>
+        </div>
+      </div>
     </section>
   );
 }
@@ -184,6 +203,7 @@ function Join({ prefill, onBack, onJoined }: { prefill: string; onBack: () => vo
     setBusy(false);
     if (!r.ok) return fail(r.message);
     if (r.info.closed) return fail('That room has been closed.');
+    if (r.info.full) return fail(`That table is full (${r.info.tableSize}/${r.info.tableSize}). Ask the admin to add a seat.`);
     if (r.info.expired) return fail('That room code has expired. Ask for a new one.');
     play('tap'); buzz(HAP.click);
     onJoined(v);

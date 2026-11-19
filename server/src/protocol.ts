@@ -8,6 +8,7 @@ export type Throwable = (typeof THROWABLES)[number];
 export type ClientMsg =
   | { t: 'ready'; ready: boolean }
   | { t: 'mode'; mode: SessionMode }
+  | { t: 'size'; size: number }
   | { t: 'start' }
   | { t: 'pick'; mode: HandMode }
   | { t: 'deal' }

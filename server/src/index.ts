@@ -41,13 +41,13 @@ export default {
       // POST /api/rooms  { mode }  → { code }
       if (parts[1] === 'rooms' && parts.length === 2 && req.method === 'POST') {
         const me = await authenticate(bearer(req), env);
-        const body = (await req.json().catch(() => ({}))) as { mode?: SessionMode };
+        const body = (await req.json().catch(() => ({}))) as { mode?: SessionMode; seats?: number };
         const mode = body.mode && SESSION_MODES.includes(body.mode) ? body.mode : 'classic';
         for (let attempt = 0; attempt < 5; attempt++) {
           const code = generateRoomCode();
           const res = await roomStub(env, code).fetch('https://room/init', {
             method: 'POST',
-            body: JSON.stringify({ code, mode, uid: me.uid, name: me.name }),
+            body: JSON.stringify({ code, mode, uid: me.uid, name: me.name, seats: Number(body.seats) || 7 }),
           });
           if (res.status === 409) continue; // code already taken: try another
           return json({ code, joinUrl: `${url.origin}/j/${code}` }, 201);

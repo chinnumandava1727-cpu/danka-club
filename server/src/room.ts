@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
   type GameEvent, type GameState, type SessionMode, GameError, SESSION_MODES, STAND_IN_RULES,
-  close, commitmentInput, createGame, deal, deckString, freshDeck, join, leave, needsDeck, nextHand,
+  close, commitmentInput, createGame, setTableSize, deal, deckString, freshDeck, join, leave, needsDeck, nextHand,
   onDeadline, pickMode, prepareDeal, randomHex, seatOf, setConnected, setReady, setSessionMode, sha256Hex,
   shuffle, start, act, viewFor,
 } from '@danka/engine';
@@ -58,11 +58,11 @@ export class Room extends DurableObject<Env> {
     return new Response('Not found', { status: 404 });
   }
 
-  private async init(body: { code: string; mode: SessionMode; uid: string; name: string }): Promise<Response> {
+  private async init(body: { code: string; mode: SessionMode; uid: string; name: string; seats?: number }): Promise<Response> {
     if (this.s) return Response.json({ error: 'exists' }, { status: 409 });
     const mode = SESSION_MODES.includes(body.mode) ? body.mode : 'classic';
     const now = Date.now();
-    const game = createGame({ rules: { ...STAND_IN_RULES }, sessionMode: mode, admin: { uid: body.uid, name: body.name }, now });
+    const game = createGame({ rules: { ...STAND_IN_RULES }, sessionMode: mode, admin: { uid: body.uid, name: body.name }, now, tableSize: body.seats });
     this.s = { game, code: body.code, seq: 1, recent: [], purgeAt: null };
     await this.persist();
     return Response.json({ code: body.code });
@@ -75,7 +75,8 @@ export class Room extends DurableObject<Env> {
       exists: true,
       phase: g.phase,
       seats: g.seats.length,
-      full: g.seats.length >= 7,
+      tableSize: g.tableSize,
+      full: g.seats.length >= g.tableSize,
       closed: g.phase === 'closed',
       expired: this.expired(),
       sessionMode: g.sessionMode,
@@ -168,6 +169,8 @@ export class Room extends DurableObject<Env> {
           return this.commit(setReady(g, me.uid, !!msg.ready));
         case 'mode':
           return this.commit(setSessionMode(g, me.uid, msg.mode));
+        case 'size':
+          return this.commit(setTableSize(g, me.uid, Number(msg.size)));
         case 'start':
           return this.commit(start(g, me.uid, now));
         case 'pick':

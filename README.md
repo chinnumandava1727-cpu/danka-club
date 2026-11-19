@@ -21,7 +21,12 @@ Already implemented from the spec:
   and locks cards to seats before the dealer's deal, which is ceremonial. Unselected cards never leave the server.
 - Cards are dealt clockwise from the dealer's left. Each phone only ever receives its own cards.
 - Fairness proof: SHA-256 of `deck|salt` is published before the deal; deck and salt are revealed after the hand.
-- Exactly 7 seats in entry order; an 8th player is refused; reconnecting returns you to your seat.
+- The creator picks the table size (2–7 players). Seats fill in entry order; extra players get "table full".
+  The admin can add or remove seats in the waiting room or between hands, or start early with 2+ players;
+  latecomers join any time (except Tournament Night) and play from the next hand.
+- Reconnecting returns you to your seat; a refresh puts you straight back at the table.
+- Mobile-grade connection handling: 10 s heartbeat (answered without waking the room), dead-connection
+  detection, jittered reconnects, 1.5 s turn grace for slow networks, double-tap lock, screen kept awake.
 - Turn timer with auto-pack, auto-deal, room codes without 0/O/1/I/L, 24-hour expiry, admin closes between hands.
 - Modes: Classic, Muflis, AK47, Joker Draw, Best of Four, Dealer's Choice, Tournament Night.
 

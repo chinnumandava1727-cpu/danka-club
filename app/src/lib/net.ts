@@ -7,18 +7,18 @@ export type Status = 'connecting' | 'open' | 'reconnecting' | 'rejected' | 'repl
 /** The server lives on the same origin in the browser; the Android app sets VITE_SERVER_URL. */
 export const SERVER = (import.meta.env.VITE_SERVER_URL as string | undefined) ?? location.origin;
 
-export async function createRoom(token: string, mode: SessionMode): Promise<string> {
+export async function createRoom(token: string, mode: SessionMode, seats: number): Promise<string> {
   const res = await fetch(`${SERVER}/api/rooms`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({ mode, seats }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.message ?? 'Could not create a room.');
   return body.code;
 }
 
-export interface RoomInfo { exists: boolean; full?: boolean; closed?: boolean; expired?: boolean; phase?: string; players?: string[] }
+export interface RoomInfo { exists: boolean; full?: boolean; seats?: number; tableSize?: number; closed?: boolean; expired?: boolean; phase?: string; players?: string[] }
 
 export async function roomInfo(code: string): Promise<{ ok: true; info: RoomInfo } | { ok: false; message: string }> {
   try {
