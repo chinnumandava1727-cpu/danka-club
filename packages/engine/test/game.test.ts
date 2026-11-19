@@ -57,15 +57,61 @@ describe('rooms', () => {
     expect(st.seats[3].name).toBe('Kiran');
   });
 
-  it('only starts with 7 ready players, by the admin', () => {
+  it('starts with 2 or more ready players, only by the admin', () => {
     const st = createGame({ rules: { ...STAND_IN_RULES }, sessionMode: 'classic', admin: { uid: 'a', name: 'Rc' }, now });
-    expectCode(() => start(st, 'a', now), 'not_full');
-    for (let i = 1; i < 7; i++) join(st, `p${i}`, `P${i}`, now);
+    st.seats[0].ready = true;
+    expectCode(() => start(st, 'a', now), 'not_enough_players');
+    join(st, 'p1', 'P1', now);
     expectCode(() => start(st, 'a', now), 'not_ready');
     st.seats.forEach((s) => (s.ready = true));
     expectCode(() => start(st, 'p1', now), 'not_admin');
     start(st, 'a', now);
     expect(st.phase).toBe('dealing');
+  });
+
+  it('plays a full hand with 3 players', async () => {
+    const st = createGame({ rules: { ...STAND_IN_RULES }, sessionMode: 'classic', admin: { uid: 'a', name: 'Rc' }, now });
+    join(st, 'b', 'B', now); join(st, 'c', 'C', now);
+    st.seats.forEach((s) => (s.ready = true));
+    start(st, 'a', now);
+    await shuffleIn(st);
+    expect(st.pot).toBe(30);
+    expect(st.seats.every((s) => s.cards.length === 3)).toBe(true);
+    deal(st, 'a', now);
+    expect(st.turn).toBe(1);
+    act(st, 'b', { type: 'chaal' }, now);
+    act(st, 'c', { type: 'pack' }, now);
+    act(st, 'a', { type: 'show' }, now);
+    expect(st.phase).toBe('hand_over');
+    expect(st.seats.reduce((x, s) => x + s.coins - s.loan, 0)).toBe(3 * STAND_IN_RULES.startingCoins);
+  });
+
+  it('lets a late joiner in mid-hand; they sit out and are dealt in next hand', async () => {
+    const st = createGame({ rules: { ...STAND_IN_RULES }, sessionMode: 'classic', admin: { uid: 'a', name: 'Rc' }, now });
+    join(st, 'b', 'B', now);
+    st.seats.forEach((s) => (s.ready = true));
+    start(st, 'a', now);
+    await shuffleIn(st);
+    deal(st, 'a', now);
+    const r = join(st, 'late', 'Late', now);
+    expect(r.seat).toBe(2);
+    expect(st.seats[2].status).toBe('packed');
+    expect(st.seats[2].coins).toBe(STAND_IN_RULES.startingCoins);
+    expect(viewFor(st, 'late').waitingForNextHand).toBe(true);
+    act(st, 'b', { type: 'pack' }, now);
+    expect(st.phase).toBe('hand_over');
+    nextHand(st, now);
+    await shuffleIn(st);
+    expect(st.seats[2].cards).toHaveLength(3);
+    expect(st.seats[2].status).toBe('in');
+  });
+
+  it('does not allow late joining in Tournament Night', async () => {
+    const st = createGame({ rules: { ...STAND_IN_RULES }, sessionMode: 'tour', admin: { uid: 'a', name: 'Rc' }, now });
+    join(st, 'b', 'B', now);
+    st.seats.forEach((s) => (s.ready = true));
+    start(st, 'a', now);
+    expectCode(() => join(st, 'late', 'Late', now), 'game_started');
   });
 
   it('the first player to enter deals game 1', () => {

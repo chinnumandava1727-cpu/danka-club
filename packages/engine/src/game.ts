@@ -230,13 +230,16 @@ export function join(st: GameState, uid: string, name: string, now: number): { s
     st.seats[existing].connected = true;
     return { seat: existing, events: [{ e: 'joined', seat: existing, name: st.seats[existing].name, rejoined: true }] };
   }
-  if (st.phase === 'closed') fail('room_closed', 'This room has been closed.');
-  if (st.phase !== 'waiting') fail('game_started', 'This game has already started.');
+  if (st.phase === 'closed' || st.phase === 'session_over') fail('room_closed', 'This room has been closed.');
   if (st.seats.length >= MAX_SEATS) fail('room_full', 'This room is full (7/7).');
+  const started = st.phase !== 'waiting';
+  if (started && (!st.rules.lateJoin || st.sessionMode === 'tour')) fail('game_started', 'This game has already started.');
   const clean = name.trim().slice(0, 24) || `Player ${st.seats.length + 1}`;
-  st.seats.push({ uid, name: clean, coins: 0, loan: 0, out: false, status: 'in', seen: false, cards: [], ready: false, connected: true, blindTurns: 0, contributed: 0 });
+  // A late joiner is dealt in if the cards are not locked yet; otherwise they sit out until the next hand begins.
+  const dealtIn = !started || st.phase === 'picking' || (st.phase === 'dealing' && st.commit === null);
+  st.seats.push({ uid, name: clean, coins: started ? st.rules.startingCoins : 0, loan: 0, out: false, status: dealtIn ? 'in' : 'packed', seen: false, cards: [], ready: started, connected: true, blindTurns: 0, contributed: 0 });
   const seat = st.seats.length - 1;
-  log(st, now, { kind: 'info', seat, text: `${clean} joined as seat #${seat + 1}${seat === 0 ? ' and deals game 1' : ''}` });
+  log(st, now, { kind: 'info', seat, text: started ? `${clean} joined the game as seat #${seat + 1} and plays from the next hand` : `${clean} joined as seat #${seat + 1}${seat === 0 ? ' and deals game 1' : ''}` });
   return { seat, events: [{ e: 'joined', seat, name: clean, rejoined: false }] };
 }
 
@@ -272,7 +275,7 @@ export function setSessionMode(st: GameState, uid: string, mode: SessionMode): G
 export function start(st: GameState, uid: string, now: number): GameEvent[] {
   if (uid !== st.adminUid) fail('not_admin', 'Only the admin can start the game.');
   if (st.phase !== 'waiting') fail('game_started', 'The game has already started.');
-  if (st.seats.length !== MAX_SEATS) fail('not_full', 'All 7 seats must be filled before starting.');
+  if (st.seats.length < st.rules.minPlayers) fail('not_enough_players', `At least ${st.rules.minPlayers} players are needed to start.`);
   if (!st.seats.every((s) => s.ready)) fail('not_ready', 'Every player must be ready.');
   for (const s of st.seats) s.coins = st.rules.startingCoins;
   st.dealer = 0; // first to enter deals game 1; the admin cannot change this
@@ -597,6 +600,10 @@ export interface PlayerView {
   /** A Seen player stakes this multiple of the blind stake. */
   seenMultiplier: number;
   turnSeconds: number;
+  minPlayers: number;
+  maxSeats: number;
+  /** You joined during a hand and are dealt in from the next one. */
+  waitingForNextHand: boolean;
   seats: SeatView[];
   commit: string | null;
   result: HandResult | null;
@@ -646,6 +653,9 @@ export function viewFor(st: GameState, uid: string, ledgerTail = 60): PlayerView
     pot: st.pot,
     seenMultiplier: st.rules.seenMultiplier,
     turnSeconds: st.rules.turnSeconds,
+    minPlayers: st.rules.minPlayers,
+    maxSeats: MAX_SEATS,
+    waitingForNextHand: !!mine && !mine.out && mine.cards.length === 0 && (st.phase === 'betting' || st.phase === 'hand_over' || (st.phase === 'dealing' && st.commit !== null)),
     seats,
     commit: st.commit,
     result: over ? st.result : null,
@@ -659,7 +669,7 @@ export function viewFor(st: GameState, uid: string, ledgerTail = 60): PlayerView
       show: myTurn && (twoLeft || !st.rules.showOnlyWithTwo) ? costFor(st, me) : null,
       deal: st.phase === 'dealing' && st.commit !== null && me === st.dealer,
       pick: st.phase === 'picking' && me === st.dealer,
-      start: st.phase === 'waiting' && uid === st.adminUid && st.seats.length === MAX_SEATS && st.seats.every((s) => s.ready),
+      start: st.phase === 'waiting' && uid === st.adminUid && st.seats.length >= st.rules.minPlayers && st.seats.every((s) => s.ready),
       next: st.phase === 'hand_over',
     },
     yourHand: mine && mine.seen && mine.cards.length ? bestHand(mine.cards, handContext(st)).name : null,

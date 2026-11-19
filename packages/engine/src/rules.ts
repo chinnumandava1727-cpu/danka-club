@@ -15,6 +15,10 @@ export interface HouseRules {
   stakeCapMultiple: number;
   /** Q5 Maximum consecutive blind turns per player; null = unlimited. */
   maxBlindTurns: number | null;
+  /** Fewest seated players needed to start (the original spec said exactly 7; the group asked for 2+). */
+  minPlayers: number;
+  /** Players may join a game already in progress; they are dealt in from the next hand. Never in Tournament Night. */
+  lateJoin: boolean;
   /** Q1 Cards per player in Classic. (The spec's "random card count" is still undefined.) */
   cardsPerPlayer: 3;
   /** Q6 Show is only allowed when exactly two players remain. */
@@ -40,6 +44,8 @@ export interface HouseRules {
 
 export const STAND_IN_RULES: Readonly<HouseRules> = Object.freeze({
   boot: 10,
+  minPlayers: 2,
+  lateJoin: true,
   seenMultiplier: 2,
   stakeCapMultiple: 64,
   maxBlindTurns: null,

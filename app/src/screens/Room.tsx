@@ -11,8 +11,19 @@ import { ModeSheet, type ToastFn } from '../App';
 import { Icon } from './Icon';
 
 const COLORS = ['#F4A300', '#81B29A', '#E07A5F', '#F2CC8F', '#B8A1D9', '#6FB7E0', '#E9A6A6'];
-// Positions of the other six seats around the felt, clockwise from your left (you are always bottom-centre).
-const POS = [null, { x: 13, y: 71, s: 'sl' }, { x: 9, y: 44, s: 'sl' }, { x: 24, y: 15, s: 'sl' }, { x: 76, y: 15, s: 'sr' }, { x: 91, y: 44, s: 'sr' }, { x: 87, y: 71, s: 'sr' }] as const;
+// Where the other players sit around the felt, clockwise from your left (you are always bottom-centre).
+// The layout spreads out evenly for 2 to 7 players.
+type Pos = { x: number; y: number; s: 'sl' | 'sr' };
+const L = (x: number, y: number): Pos => ({ x, y, s: x <= 50 ? 'sl' : 'sr' });
+const LAYOUTS: Record<number, Pos[]> = {
+  1: [L(50, 13)],
+  2: [L(24, 15), L(76, 15)],
+  3: [L(9, 44), L(50, 13), L(91, 44)],
+  4: [L(9, 44), L(24, 15), L(76, 15), L(91, 44)],
+  5: [L(13, 71), L(9, 44), L(50, 13), L(91, 44), L(87, 71)],
+  6: [L(13, 71), L(9, 44), L(24, 15), L(76, 15), L(91, 44), L(87, 71)],
+};
+const posFor = (k: number, n: number): Pos | undefined => LAYOUTS[n - 1]?.[k - 1];
 const ini = (name: string) => name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '?';
 const fmt = (n: number) => n.toLocaleString('en-IN');
 
@@ -245,7 +256,8 @@ function Lobby({ view, code, client, toast, onExit, onSettings }: { view: Player
   const me = view.seats[view.you];
   const isAdmin = !!me?.isAdmin;
   const n = view.seats.length;
-  const allReady = n === 7 && view.seats.every((s) => s.ready);
+  const min = view.minPlayers;
+  const allReady = n >= min && view.seats.every((s) => s.ready);
   const link = `${SERVER}/j/${code}`;
   const share = async () => {
     const text = `Join my DANKA CLUB table! Room code: ${code}`;
@@ -266,7 +278,7 @@ function Lobby({ view, code, client, toast, onExit, onSettings }: { view: Player
         <div><small>Room code</small><div className="room-code">{code}</div></div>
         <button className="btn line" style={{ height: 46 }} onClick={share}><Icon name="share" />Invite</button>
       </div>
-      <div className="lobby-status"><span>{n < 7 ? 'Waiting for players' : allReady ? 'All 7 ready' : 'Everyone is here. Tap ready.'}</span><b className="num">{n}/7</b></div>
+      <div className="lobby-status"><span>{n < min ? `Waiting for at least ${min} players` : allReady ? `${n} players ready. Start now or wait for more.` : 'Tap ready when you are set.'}</span><b className="num">{n}/7</b></div>
       <div className="progress"><i style={{ width: `${(n / 7) * 100}%` }} /></div>
       <button className="mode-row" onClick={() => { if (!isAdmin) { play('error'); toast('Only the admin can change the game mode'); return; } play('tap'); setModes(true); }}>
         <span><small>{isAdmin ? 'Game mode · tap to change' : 'Game mode · set by the admin'}</small><b>{MODE_NAMES[view.sessionMode]}</b></span><Icon name="chevron" />
@@ -274,7 +286,7 @@ function Lobby({ view, code, client, toast, onExit, onSettings }: { view: Player
       <div className="seat-list">
         {Array.from({ length: 7 }, (_, i) => {
           const s = view.seats[i];
-          if (!s) return <div key={i} className="lrow empty"><span className="ord">#{i + 1}</span>Waiting for a player to join…</div>;
+          if (!s) return <div key={i} className="lrow empty"><span className="ord">#{i + 1}</span>Open seat</div>;
           return (
             <div key={i} className="lrow pop">
               <span className="ord">#{i + 1}</span>
@@ -286,11 +298,11 @@ function Lobby({ view, code, client, toast, onExit, onSettings }: { view: Player
           );
         })}
       </div>
-      <p className="rule-note">Seats fill in entry order. Seat #1 deals game 1; after that, each winner deals.</p>
+      <p className="rule-note">Start with 2 to 7 players. Seat #1 deals game 1, then each winner deals. Friends can still join after the game starts and play from the next hand.</p>
       <div className="lobby-actions">
         <button className="btn line" onClick={() => { client.send({ t: 'ready', ready: !me?.ready }); play('clink'); buzz(HAP.click); }}>{me?.ready ? 'Not ready' : "I'm ready"}</button>
         {isAdmin
-          ? <button className="btn gold" disabled={!view.options.start} onClick={() => { client.send({ t: 'start' }); }}>Start game</button>
+          ? <button className="btn gold" disabled={!view.options.start} onClick={() => { client.send({ t: 'start' }); }}>{n >= min ? `Start with ${n}` : 'Start game'}</button>
           : <button className="btn gold" disabled>Admin starts</button>}
       </div>
       <div className={`scrim${modes ? ' on' : ''}`} onClick={() => setModes(false)} />
@@ -315,7 +327,7 @@ function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { 
     if (!d || !a || !av) return;
     let x = av.left - a.left + av.width / 2, y = av.top - a.top + av.height / 2;
     const k = (view.dealer - you + n) % n;
-    if (k === 0) { x += 34; y -= 30; } else if (POS[k]!.s === 'sl') { x += 30; y += 22; } else { x -= 30; y += 22; }
+    if (k === 0) { x += 34; y -= 30; } else if (posFor(k, n)?.s !== 'sr') { x += 30; y += 22; } else { x -= 30; y += 22; }
     d.style.left = `${x}px`; d.style.top = `${y}px`;
   }, [view.dealer, you, n]);
 
@@ -326,6 +338,7 @@ function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { 
 
   const status =
     view.phase === 'picking' ? `${view.dealer === you ? 'You are' : view.seats[view.dealer].name + ' is'} picking the game…`
+    : view.waitingForNextHand ? 'You joined during this hand. You are dealt in from the next hand.'
     : view.phase === 'dealing' ? (o.deal ? 'You are the dealer. Tap the deck to deal.' : `${view.seats[view.dealer].name} is dealing`)
     : view.phase === 'betting' ? (me.status !== 'in' ? 'You packed. Watching the rest of the hand.' : view.turn === you ? `Your turn. ${me.seen ? 'You are Seen, so you bet double.' : 'You are playing Blind.'}` : `${view.seats[view.turn]?.name} is thinking…`)
     : view.phase === 'hand_over' ? `${view.result ? (view.result.winner === you ? 'You win' : view.seats[view.result.winner].name + ' wins') : ''} the pot`
@@ -354,7 +367,7 @@ function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { 
         </div>
         {view.seats.map((s, i) => {
           if (i === you) return null;
-          const k = (i - you + n) % n, pos = POS[k];
+          const k = (i - you + n) % n, pos = posFor(k, n);
           if (!pos) return null;
           const cls = ['seat', pos.s, view.turn === i ? 'turn' : '', s.status === 'packed' ? 'packed' : '', s.status === 'out' ? 'out' : '', s.seen && s.status === 'in' ? 'seen-st' : ''].join(' ');
           return (
@@ -368,7 +381,7 @@ function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { 
               </div>
               <div className="nm">{s.name}</div>
               <div className="co num">{fmt(s.coins)}</div>
-              <Tag s={s} />
+              <Tag s={s} phase={view.phase} />
             </div>
           );
         })}
@@ -381,7 +394,7 @@ function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { 
             <div className="av">{ini(me.name)}</div><span className="dot" /><div className="bubble" />
           </div>
           <div className="co num">{fmt(me.coins)}</div>
-          <Tag s={me} />
+          <Tag s={me} phase={view.phase} />
         </div>
         <MyCards view={view} visible={cardsVisible} onSee={() => { if (o.see) client.act({ type: 'see' }); }} />
         <div className="me-right">
@@ -404,8 +417,9 @@ function Table({ view, code, client, dealing, onSheet, onReact, onSettings }: { 
   );
 }
 
-function Tag({ s }: { s: PlayerView['seats'][number] }) {
+function Tag({ s, phase }: { s: PlayerView['seats'][number]; phase: PlayerView['phase'] }) {
   if (s.status === 'out') return <span className="tag out">Out</span>;
+  if (s.status === 'packed' && s.cardCount === 0 && (phase === 'betting' || phase === 'dealing' || phase === 'hand_over')) return <span className="tag out">Next hand</span>;
   if (s.status === 'packed') return <span className="tag packed">Packed</span>;
   if (s.seen) return <span className="tag seen"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>Seen</span>;
   return <span className="tag blind"><svg viewBox="0 0 24 24"><path d="M2 12s4-6 10-6 10 6 10 6M4 15l2-2M20 15l-2-2M12 17v-3" /></svg>Blind</span>;
