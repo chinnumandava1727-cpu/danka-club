@@ -138,12 +138,13 @@ describe('four-card game §7 (Well Cut game 1)', () => {
     expect(h('As Ah Ad Kc').quad).toBe(false);
     expect(h('As Ah Ad Kc').trail).toBe(false);
   });
-  it('same principles adapted to four cards (awaiting confirmation)', () => {
-    expect(h('4s 5s 6s 7s').name).toBe('Pure Sequence');
-    expect(h('4s 5h 6d 7c').name).toBe('Sequence');
-    expect(h('4s 5s 6d 7c').cat).toBe(CAT.HIGH);
-    expect(h('2s 5s 9s Ks').name).toBe('Colour');
-    const order = ['9s 9h 9d 9c', '4s 5s 6s 7s', '4s 5h 6d 7c', '2s 5s 9s Ks', 'Qs Qh Qd 3c', 'Js Jh 4d 4c', 'Ts Th 8d 3c', 'As Kh 9d 4c'];
-    for (let i = 0; i < order.length - 1; i++) beats(order[i], order[i + 1]);
+  it('otherwise the best three of the four cards count', () => {
+    expect(h('4s 5h 6d Kc').name).toBe('Sequence');
+    expect(h('4s 5s 6s Kh').name).toBe('Pure Sequence');
+    expect(h('2s 9s Ks 4h').name).toBe('Colour');
+    beats('As Ah Ad Kc', 'Js Qs Ks Ah'); // three Aces rank as a Trail (no bonus) above a Pure Sequence
+    beats('4s 5s 6s 2h', '4h 5d 6c 2c');
+    beats('Qs Qh 3c 9d', 'Js Jh As 2d');
+    expect(compareHands(h('4s 5s 6d 7c'), h('2s 3h 9d Kc'))).toBeGreaterThan(0); // 5-6-7 inside is a Sequence
   });
 });

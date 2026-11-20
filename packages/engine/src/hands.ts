@@ -6,14 +6,14 @@ import { type Card, rankLabel } from './cards';
  * Categories, highest first (sections 2–7):
  *   3 cards: Trail > Pure Sequence (Flush) > Sequence > Colour > Pair > High Card
  *   2 cards: Pair (22 highest, then AA, KK …) > Pure Sequence > Sequence > Colour > High Card
- *   4 cards: Four of a Kind > Pure Sequence > Sequence > Colour > Three of a Kind > Two Pair > Pair > High Card
- *            (only Four of a Kind is confirmed; the rest follows the same principles and awaits the group's confirmation)
+ *   4 cards: Four of a Kind is the highest hand; otherwise the best 3-card hand inside the 4 cards counts
+ *            (confirmed by the group). Three matching cards inside four are ranked as a Trail but get no bonus.
  *   1 card:  highest card
  *
  * - Pure Sequence: consecutive values, all the same suit.
  * - Sequence: consecutive values and EVERY card a different suit (4♠ 5♠ 6♦ is not a Sequence).
  * - Colour: every card the same suit, not consecutive (two of three suited cards is not Colour).
- * - Aces in sequences (awaiting confirmation): A-K-Q highest, A-2-3 next, then K-Q-J down to 4-3-2.
+ * - Aces in sequences (confirmed): A-K-Q highest, A-2-3 next, then K-Q-J down to 4-3-2.
  *
  * Tie-break (section 8): within a category the deciding values are compared first (pair value, then kicker,
  * or the cards highest first). When the values are the same, sort the cards highest value first and compare
@@ -27,13 +27,11 @@ export const SUIT_SYMBOLS = ['♠', '♥', '♦', '♣'];
 export const CAT = {
   HIGH: 1,
   PAIR: 2,
-  TWO_PAIR: 3,
-  THREE_OF_A_KIND: 4,
-  COLOUR: 5,
-  SEQUENCE: 6,
-  PURE_SEQUENCE: 7,
-  TRAIL: 8,
-  FOUR_OF_A_KIND: 9,
+  COLOUR: 3,
+  SEQUENCE: 4,
+  PURE_SEQUENCE: 5,
+  TRAIL: 6,
+  FOUR_OF_A_KIND: 7,
 } as const;
 
 export interface HandValue {
@@ -105,23 +103,19 @@ export function evalThree(cs: readonly Card[]): HandValue {
   return c;
 }
 
-/** §7 Four-card game (Well Cut game 1). */
+/** §7 Four-card game (Well Cut game 1): Four of a Kind, otherwise the best three of the four cards. */
+const FOUR_COMBOS = [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]];
 export function evalFour(cs: readonly Card[]): HandValue {
   if (cs.length !== 4) throw new Error('evalFour needs exactly 4 cards');
   const s = sortCards(cs), v = s.map((c) => c.r);
   if (v[0] === v[3]) return hand(4, CAT.FOUR_OF_A_KIND, [v[0], ...suits(s)], `Four ${plural(v[0])}`, { quad: true });
-  const c = common(4, s);
-  if (c.cat !== CAT.HIGH) return c;
-  const counts = new Map<number, number>();
-  for (const x of v) counts.set(x, (counts.get(x) ?? 0) + 1);
-  const groups = [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0]);
-  if (groups[0][1] === 3) return hand(4, CAT.THREE_OF_A_KIND, [groups[0][0], groups[1][0], ...suits(s)], `Three ${plural(groups[0][0])}`);
-  if (groups[0][1] === 2 && groups[1][1] === 2) return hand(4, CAT.TWO_PAIR, [groups[0][0], groups[1][0], ...suits(s)], `Two Pair, ${plural(groups[0][0])} and ${plural(groups[1][0])}`);
-  if (groups[0][1] === 2) {
-    const kickers = groups.slice(1).map((g) => g[0]);
-    return hand(4, CAT.PAIR, [groups[0][0], ...kickers, ...suits(s)], `Pair of ${plural(groups[0][0])}`);
+  let best: HandValue | null = null;
+  for (const ix of FOUR_COMBOS) {
+    const h3 = evalThree(ix.map((i) => s[i]));
+    if (!best || compareHands(h3, best) > 0) best = h3;
   }
-  return c;
+  // Three matching cards inside four rank as a Trail but never earn the bonus (§7).
+  return { ...best!, size: 4, trail: false };
 }
 
 /** Pure Sequence, Sequence, Colour or High Card for 2–4 cards (sorted highest first). */

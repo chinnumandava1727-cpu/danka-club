@@ -360,6 +360,21 @@ describe('bonuses (tests 21, 22, 32)', () => {
     expect(st.result!.bonus).toEqual({ kind: 'quad', total: 6, each: 3 });
   });
 
+  it('Three of a Kind also pays in Well Cut game 2 (the 3-card game) when the holder wins', async () => {
+    const st = room(3);
+    startRound(st, uid(0), now);
+    await shuffleIn(st);
+    cutWell(st, uid(0)); deal(st, uid(0), now);
+    a(st, 1, 'pack'); a(st, 2, 'pack'); // seat 0 wins game 1 and deals game 2
+    nextGame(st, now);
+    expect(st.cardsEach).toBe(3);
+    await shuffleIn(st, rig(st, { 2: ['Ks', 'Kh', 'Kd'] }, 3));
+    deal(st, uid(0), now);
+    a(st, 1, 'pack'); a(st, 2, 'blind'); a(st, 0, 'pack');
+    expect(st.result!.winner).toBe(2);
+    expect(st.result!.bonus).toEqual({ kind: 'trail', total: 6, each: 3 });
+  });
+
   it('no bonus in the 2-card and 1-card games', async () => {
     const st = room(2);
     startRound(st, uid(0), now);

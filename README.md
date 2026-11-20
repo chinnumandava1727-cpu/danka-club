@@ -28,7 +28,8 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   the tap arrived. The round clock never interrupts a Well Cut.
 - Ranking follows the group's Local Card Rules (`packages/engine/src/hands.ts`):
   3 cards Trail > Pure Sequence > Sequence > Colour > Pair > High; 2 cards Pair (22 highest, then AA) > Pure Sequence >
-  Sequence > Colour > High; 4 cards Four of a Kind highest (rest adapted, awaiting confirmation); 1 card highest card.
+  Sequence > Colour > High; 4 cards Four of a Kind, otherwise the best 3 of the 4; 1 card highest card.
+  Ace runs: A-K-Q highest, A-2-3 next. Three of a Kind bonus pays in every 3-card game, Well Cut game 2 included.
   A Sequence needs every card in a different suit; Colour needs every card in one suit. Ties: sort highest first,
   compare values, then suits card by card (Spades > Hearts > Diamonds > Clubs), so there is never a draw.
 - Bonus N×(N−1), only when the holder wins the game: Three of a Kind in normal 3-card games, Four of a Kind in Well Cut game 1.

@@ -737,7 +737,8 @@ function finishGame(st: State, winner: number, reason: 'all_packed' | 'show', sh
   const wcGame = wellCutGameNo(st);
   const hand = evaluate(w.cards);
   let bonus: GameResult['bonus'] = null;
-  const trail = wcGame === null && st.cardsEach === 3 && hand.trail;
+  // §6/§9 Three of a Kind pays in every 3-card game, Well Cut game 2 included; Four of a Kind in the 4-card game.
+  const trail = st.cardsEach === 3 && hand.trail;
   const quad = wcGame === 1 && st.cardsEach === 4 && hand.quad;
   if (trail || quad) {
     const n = st.dealt.length;
