@@ -76,6 +76,12 @@ export async function settlementPdf(r: SessionReport): Promise<Blob> {
   if (r.loans.length) table([{ h: 'Borrower', w: 4 }, { h: 'Owes', w: 1.4 }, { h: 'Lender', w: 4 }, { h: 'Amount', w: 2, right: true }],
     r.loans.map((l) => [l.borrowerName, 'owes', l.lenderName, l.amount]), 9);
   else text('None.', 9);
+  y += 4;
+  if (r.loanLog.length) {
+    text('Every player loan', 11, true, [18, 50, 56]);
+    table([{ h: 'Time', w: 1.6 }, { h: 'Game', w: 1.2, right: true }, { h: 'Lender', w: 4 }, { h: 'Borrower', w: 4 }, { h: 'Amount', w: 2, right: true }],
+      r.loanLog.map((l) => [hm(l.at), l.game, l.lender, l.borrower, l.amount]), 8);
+  }
   y += 6;
 
   // Player statistics
@@ -87,13 +93,26 @@ export async function settlementPdf(r: SessionReport): Promise<Blob> {
   );
 
   // Every game
-  const games = r.scorecards.flatMap((c) => c.results);
+  const games = r.scorecards.filter((c) => c.kind === 'game').flatMap((c) => c.results);
+  const breaks = r.scorecards.filter((c) => c.kind === 'placecut');
   need(80);
   text(`Game by game (${games.length})`, 13, true, [18, 50, 56]);
   table(
     [{ h: 'Game', w: 1.4 }, { h: 'Time', w: 1.6 }, { h: 'Cards', w: 2 }, { h: 'Winner', w: 4 }, { h: 'Pot', w: 1.6, right: true }, { h: 'Bonus', w: 1.6, right: true }, { h: 'How', w: 2.6 }],
     games.map((g) => [g.game, hm(g.at), g.wellCutGame ? `${g.cardsEach} (WC ${g.wellCutGame}/4)` : g.cardsEach, g.winner, g.pot, g.bonus || '', g.reason === 'show' ? 'Show' : 'Others packed']),
   );
+
+  // Each Placecut
+  for (const c of breaks) {
+    need(120);
+    text(`Placecut ${c.period} - after game ${c.round} - ${t2(c.at)}`, 12, true, [18, 50, 56]);
+    table(
+      [{ h: 'Player', w: 4 }, { h: 'Balance', w: 2, right: true }, { h: 'This period', w: 2.2, right: true }, { h: 'Bank owed', w: 2, right: true },
+        { h: 'Owes players', w: 2.2, right: true }, { h: 'Owed to them', w: 2.2, right: true }, { h: 'Net', w: 2, right: true }],
+      c.rows.map((p) => [p.name, p.balance, sgn(p.periodChange), p.outstandingLoan, p.owesPlayers, p.owedByPlayers, sgn(p.net)]),
+    );
+  }
+
 
   // Ledger
   doc.addPage(); y = M;

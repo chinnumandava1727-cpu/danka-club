@@ -19,7 +19,7 @@ export type Phase =
   | 'dealing' // cards are locked; the dealer distributes them
   | 'betting'
   | 'game_over'
-  | 'placecut' // settlement after every game: scorecard, leave/join, admin starts the next game
+  | 'placecut' // 20-minute period over and the current game finished: settlement, leave/join, admin starts the next period
   | 'ended'; // tournament called off
 
 /** 'eliminated' = sitting out: no coins, bank loan used up, and no player loan yet. Stays at the table. */
@@ -51,7 +51,10 @@ export interface Player {
   /** Coins put into the current pot. */
   contributed: number;
   joinedRound: number;
+  /** Balance when the current 20-minute period started. */
   roundStartCoins: number;
+  /** Balance when the current game started. */
+  gameStartCoins: number;
   rs: RoundStats;
 }
 
@@ -132,6 +135,8 @@ export interface ScoreRow {
   owedByPlayers: number;
   /** Balance change in this game. */
   change: number;
+  /** Balance change since the current 20-minute period started. */
+  periodChange: number;
   /** Balance − initial allocation − bank loan − owed to players + owed by players. */
   net: number;
   eliminated: boolean;
@@ -139,10 +144,13 @@ export interface ScoreRow {
   games: number;
 }
 
-/** Settlement after a game (tournament totals; nothing resets between games). */
+/** A settlement: after each game ('game'), at each Placecut ('placecut'), or at call-off ('final'). Tournament totals; nothing resets. */
 export interface Scorecard {
+  kind: 'game' | 'placecut' | 'final';
   /** The game this settlement follows. */
   round: number;
+  /** The 20-minute period. */
+  period: number;
   at: number;
   final: boolean;
   /** Games played in the tournament so far. */
@@ -156,7 +164,17 @@ export interface Scorecard {
   loansIssued: number;
   /** Outstanding player-to-player loans. */
   loans: P2PLoan[];
+  /** Every player loan made in the tournament: lender, borrower, amount, game and time. */
+  loanLog: P2PLogEntry[];
   rows: ScoreRow[];
+}
+
+export interface P2PLogEntry {
+  borrower: string;
+  lender: string;
+  amount: number;
+  game: number;
+  at: number;
 }
 
 /** An outstanding player-to-player loan: existing coins moved from lender to borrower (never new coins). */
@@ -202,6 +220,7 @@ export type GameEvent =
   | { e: 'joined'; seat: number; name: string; rejoined: boolean }
   | { e: 'left'; name: string }
   | { e: 'start'; game: number }
+  | { e: 'period'; round: number; endsAt: number }
   | { e: 'game'; game: number; cardsEach: number; wellCutGame: number | null }
   | { e: 'commit'; hash: string }
   | { e: 'cut'; seat: number; pos: number; off: number; players: number; wellCut: boolean; auto: boolean }
@@ -226,7 +245,7 @@ export type GameEvent =
   | { e: 'table_size'; size: number };
 
 export interface State {
-  v: 3;
+  v: 4;
   rules: DankaRules;
   createdAt: number;
   adminUid: string;
@@ -235,6 +254,8 @@ export interface State {
   departed: ScoreRow[];
   phase: Phase;
   round: number;
+  /** §14 Server time when the current 20-minute period ends; then Placecut follows the current game. */
+  roundEndsAt: number | null;
   callOff: boolean;
   timerOn: boolean;
   game: number;
@@ -253,6 +274,9 @@ export interface State {
   totalBonus: number;
   /** The last Blind or Seen bet in this game (no two consecutive Blind players when 3+ are active). */
   lastBet: { seat: number; kind: 'blind' | 'seen' } | null;
+  /** Someone has played Seen in this game: from then on, no two consecutive Blind players (3+ active). */
+  seenStarted: boolean;
+  p2pLog: P2PLogEntry[];
   /** Outstanding player-to-player loans, one entry per borrower → lender pair. */
   p2p: P2PLoan[];
   requests: LoanRequest[];
@@ -313,12 +337,14 @@ export function nextActive(st: State, from: number): number {
 }
 
 /**
- * When three or more players are active, two consecutive active players cannot both be Blind:
- * if the last bet in this game was Blind, the player to act must play Seen. Folds don't reset it.
- * With two players left the restriction is removed.
+ * Blind/Seen rotation (corrected local rule). Before anyone in this game has played Seen, Blind is unrestricted.
+ * After the first Seen, with three or more active players, a Blind bet forces the next active player to play
+ * Seen; if that player folds, the next active player must play Seen. With two players left it is removed.
  */
 export const mustPlaySeen = (st: State, i: number) =>
-  !st.players[i].seen && activeSeats(st).length >= 3 && st.lastBet?.kind === 'blind' && st.lastBet.seat !== i;
+  !st.players[i].seen && st.seenStarted && activeSeats(st).length >= 3 && st.lastBet?.kind === 'blind' && st.lastBet.seat !== i;
+/** §14 The 20 minutes are up (and no Well Cut sequence is running): Placecut follows the current game. */
+export const placecutDue = (st: State, now: number) => st.roundEndsAt !== null && now >= st.roundEndsAt && !st.wellCut.active;
 export const costFor = (st: State, i: number) => (st.players[i].seen || mustPlaySeen(st, i) ? st.rules.seenCost : st.rules.blindCost);
 export const loanLeft = (st: State, i: number) => Math.max(0, st.rules.maxLoan - st.players[i].loan);
 /** §9 True when this Blind player is the only Blind one left among 3+ active players (no limit with two). */
@@ -331,8 +357,8 @@ export const canBorrowFromPlayers = (st: State, i: number) =>
   loanLeft(st, i) === 0 && st.players[i].coins < st.rules.seenCost;
 export const owesPlayers = (st: State, uid: string) => st.p2p.filter((l) => l.borrower === uid).reduce((a, l) => a + l.amount, 0);
 export const owedByPlayers = (st: State, uid: string) => st.p2p.filter((l) => l.lender === uid).reduce((a, l) => a + l.amount, 0);
-/** Join, leave and table size are locked between the four compulsory Well Cut games. */
-const atBoundary = (st: State) => st.phase === 'lobby' || (st.phase === 'placecut' && !st.wellCut.active);
+/** §14 Players join or leave only before the first period or at Placecut. */
+const atBoundary = (st: State) => st.phase === 'lobby' || st.phase === 'placecut';
 const allActiveSeen = (st: State) => activeSeats(st).every((j) => st.players[j].seen);
 const wellCutGameNo = (st: State) => (st.wellCut.active ? st.wellCut.index + 1 : null);
 
@@ -348,7 +374,7 @@ function newPlayer(st: State, uid: string, name: string, now: number): Player {
   const p: Player = {
     uid, name: name.trim().slice(0, 24) || `Player ${st.players.length + 1}`,
     coins: st.rules.startingCoins, loan: 0, status: 'in', seen: false, cards: [], connected: true,
-    extraBlinds: 0, contributed: 0, joinedRound: st.round, roundStartCoins: st.rules.startingCoins, rs: emptyStats(),
+    extraBlinds: 0, contributed: 0, joinedRound: st.round, roundStartCoins: st.rules.startingCoins, gameStartCoins: st.rules.startingCoins, rs: emptyStats(),
   };
   return p;
 }
@@ -360,11 +386,11 @@ function newPlayer(st: State, uid: string, name: string, now: number): Player {
 export function createRoom(opts: { rules: DankaRules; admin: { uid: string; name: string }; now: number; tableSize?: number }): State {
   const r = opts.rules;
   const st: State = {
-    v: 3, rules: { ...r, wellCutSequence: [...r.wellCutSequence] }, createdAt: opts.now, adminUid: opts.admin.uid,
+    v: 4, rules: { ...r, wellCutSequence: [...r.wellCutSequence] }, createdAt: opts.now, adminUid: opts.admin.uid,
     tableSize: Math.max(r.minPlayers, Math.min(r.maxPlayers, MAX_SEATS, Math.round(opts.tableSize ?? r.maxPlayers))),
-    players: [], departed: [], phase: 'lobby', round: 0, callOff: false, timerOn: false,
+    players: [], departed: [], phase: 'lobby', round: 0, roundEndsAt: null, callOff: false, timerOn: false,
     game: 0, roundGames: 0, dealerUid: opts.admin.uid, turn: -1, pot: 0, cardsEach: r.normalCards, dealt: [],
-    wellCut: { active: false, index: 0 }, wellCutCount: 0, bankLoansTotal: 0, totalPot: 0, totalBonus: 0, lastBet: null,
+    wellCut: { active: false, index: 0 }, wellCutCount: 0, bankLoansTotal: 0, totalPot: 0, totalBonus: 0, lastBet: null, seenStarted: false, p2pLog: [],
     p2p: [], requests: [], reqSeq: 0, lastCut: null, cutBar: null,
     commit: null, secret: null, result: null, deadline: null, history: [], scorecards: [], cardOutbox: [], ledger: [], outbox: [], txSeq: 0,
   };
@@ -380,8 +406,7 @@ export function join(st: State, uid: string, name: string, now: number): { seat:
     return { seat: existing, events: [{ e: 'joined', seat: existing, name: st.players[existing].name, rejoined: true }] };
   }
   if (st.phase === 'ended') fail('room_closed', 'This session has ended.');
-  if (st.phase === 'placecut' && st.wellCut.active) fail('well_cut_in_progress', 'A Well Cut is being played. You can join after its four games.');
-  if (!atBoundary(st)) fail('round_in_progress', 'A game is being played. You can join when it has been settled.');
+  if (!atBoundary(st)) fail('round_in_progress', 'The tournament is in a 20-minute period. You can join at the next Placecut.');
   if (st.players.length >= st.tableSize) fail('room_full', `This table is full (${st.tableSize}/${st.tableSize}).`);
   const p = newPlayer(st, uid, name, now);
   st.players.push(p);
@@ -400,7 +425,7 @@ function rowFor(st: State, p: Player, left: boolean): ScoreRow {
   return {
     name: p.name, startBalance: p.roundStartCoins, received: p.rs.received, paid: p.rs.paid, winnings: p.rs.winnings, losses: p.rs.losses,
     balance: p.coins, initial: st.rules.startingCoins, loanTotal: p.rs.loans, outstandingLoan: p.loan, bonusIn: p.rs.bonusIn, bonusOut: p.rs.bonusOut,
-    owesPlayers: owes, owedByPlayers: owed, change: p.coins - p.roundStartCoins,
+    owesPlayers: owes, owedByPlayers: owed, change: p.coins - p.gameStartCoins, periodChange: p.coins - p.roundStartCoins,
     net: p.coins - st.rules.startingCoins - p.loan - owes + owed, eliminated: p.status === 'eliminated', left, games: p.rs.games,
   };
 }
@@ -409,8 +434,7 @@ function rowFor(st: State, p: Player, left: boolean): ScoreRow {
 export function leave(st: State, uid: string, now: number): GameEvent[] {
   const i = requireSeat(st, uid);
   if (uid === st.adminUid) fail('admin_cannot_leave', 'The admin calls off the tournament instead of leaving.');
-  if (st.phase === 'placecut' && st.wellCut.active) fail('well_cut_in_progress', 'A Well Cut is being played. You can leave after its four games.');
-  if (!atBoundary(st) && st.phase !== 'ended') fail('round_in_progress', 'You can leave when the game has been settled.');
+  if (!atBoundary(st) && st.phase !== 'ended') fail('round_in_progress', 'You can leave at the next Placecut, when the 20 minutes are up.');
   const p = st.players[i];
   st.requests = st.requests.filter((r) => r.from !== uid && r.to !== uid);
   tx(st, now, i, 'leave', 0, `Left with ${p.coins} coins, bank loan ${p.loan}, owes players ${owesPlayers(st, uid)}, owed ${owedByPlayers(st, uid)}`);
@@ -421,7 +445,7 @@ export function leave(st: State, uid: string, now: number): GameEvent[] {
 
 export function setTableSize(st: State, uid: string, size: number): GameEvent[] {
   if (uid !== st.adminUid) fail('not_admin', 'Only the admin can change the table size.');
-  if (!atBoundary(st)) fail('round_in_progress', 'Change the table size at a settlement.');
+  if (!atBoundary(st)) fail('round_in_progress', 'Change the table size at Placecut.');
   const n = Math.max(st.rules.minPlayers, Math.min(st.rules.maxPlayers, MAX_SEATS, Math.round(size)));
   if (n < st.players.length) fail('too_small', `${st.players.length} players are already seated.`);
   st.tableSize = n;
@@ -447,17 +471,33 @@ export function setTimer(st: State, uid: string, on: boolean, now: number): Game
 /* ------------------------------------------------------------------ */
 
 /**
- * The admin starts the next game, from the waiting room or after a settlement.
- * Nothing resets: balances, bank loans, player loans, bonuses and statistics carry forward.
+ * The admin starts the next game.
+ * - From the waiting room or a Placecut: a new 20-minute period begins (§14).
+ * - After a game (its settlement is on screen): the next game of the same period, or the Placecut if the
+ *   20 minutes are up. Nothing resets: balances, loans, bonuses and statistics carry forward.
  */
 export function startGame(st: State, uid: string, now: number): GameEvent[] {
   if (uid !== st.adminUid) fail('not_admin', 'Only the admin can start the next game.');
+  if (st.phase === 'game_over') {
+    if (st.callOff) return endSession(st, now);
+    if (placecutDue(st, now)) return enterPlacecut(st, now);
+    return startNext(st, now);
+  }
   if (st.phase !== 'lobby' && st.phase !== 'placecut') fail('round_in_progress', 'A game is already being played.');
   const playable = st.players.filter((_, i) => canPlay(st, i));
   if (playable.length < st.rules.minPlayers) fail('not_enough_players', `At least ${st.rules.minPlayers} players with coins are needed.`);
   st.round += 1;
+  st.roundEndsAt = now + st.rules.roundMinutes * 60_000;
+  st.roundGames = 0;
   st.callOff = false;
   for (const p of st.players) p.roundStartCoins = p.coins;
+  tx(st, now, seatOf(st, uid), 'admin', 0, `20-minute period ${st.round} started`);
+  return [{ e: 'period', round: st.round, endsAt: st.roundEndsAt }, ...startNext(st, now)];
+}
+
+function startNext(st: State, now: number): GameEvent[] {
+  const playable = st.players.filter((_, i) => canPlay(st, i));
+  if (playable.length < st.rules.minPlayers) return enterPlacecut(st, now);
   const dealer = st.players.findIndex((p) => p.uid === st.dealerUid);
   if (dealer < 0 || !canPlay(st, dealer)) st.dealerUid = playable[0].uid;
   return [{ e: 'start', game: st.game + 1 }, ...beginGame(st, now)];
@@ -474,6 +514,7 @@ function beginGame(st: State, now: number): GameEvent[] {
       ev.push({ e: 'sitout', seat: i });
     }
     p.seen = false;
+    p.gameStartCoins = p.coins;
     p.cards = [];
     p.extraBlinds = 0;
     p.contributed = 0;
@@ -483,6 +524,7 @@ function beginGame(st: State, now: number): GameEvent[] {
   st.roundGames += 1;
   st.pot = 0;
   st.lastBet = null;
+  st.seenStarted = false;
   st.turn = -1;
   st.result = null;
   st.commit = null;
@@ -689,6 +731,7 @@ export function act(st: State, uid: string, action: Action, now: number): GameEv
       pay(st, i, st.rules.seenCost, 'seen', now);
       if (!p.seen) { p.seen = true; ev.push({ e: 'see', seat: i, auto: false }); }
       st.lastBet = { seat: i, kind: 'seen' };
+      st.seenStarted = true;
       ev.push({ e: 'bet', seat: i, kind: 'seen', amount: st.rules.seenCost });
       break;
     }
@@ -719,6 +762,7 @@ export function act(st: State, uid: string, action: Action, now: number): GameEv
       const target = nextActive(st, i);
       pay(st, i, st.rules.sideshowCost, 'sideshow', now);
       st.lastBet = { seat: i, kind: 'seen' };
+      st.seenStarted = true;
       ev.push({ e: 'bet', seat: i, kind: 'sideshow', amount: st.rules.sideshowCost });
       const hi = evaluate(p.cards), ht = evaluate(st.players[target].cards);
       const loser = compareHands(hi, ht) > 0 ? target : i;
@@ -797,6 +841,7 @@ export function answerPlayerLoan(st: State, uid: string, id: number, accept: boo
   const loan = st.p2p.find((l) => l.borrower === borrower.uid && l.lender === lender.uid);
   if (loan) loan.amount += r.amount;
   else st.p2p.push({ borrower: borrower.uid, borrowerName: borrower.name, lender: lender.uid, lenderName: lender.name, amount: r.amount });
+  st.p2pLog.push({ borrower: borrower.name, lender: lender.name, amount: r.amount, game: st.game, at: now });
   tx(st, now, li, 'p2p_out', -r.amount, `Lent to ${borrower.name}`);
   tx(st, now, bi, 'p2p_in', r.amount, `Borrowed from ${lender.name} (owes ${owesPlayers(st, borrower.uid)} to players)`);
   return [{ e: 'p2p_answer', id, from: bi, to: li, amount: r.amount, accepted: true }];
@@ -874,44 +919,54 @@ function finishGame(st: State, winner: number, reason: 'all_packed' | 'show', sh
   }
   st.turn = -1;
   st.phase = 'game_over';
-  st.deadline = { kind: 'next_game', at: now + st.rules.nextGameSeconds * 1000 };
+  // Individual game settlement (not a Placecut).
+  saveCard(st, buildScorecard(st, now, 'game'));
+  // The admin starts the next game. If the 20 minutes are up (or the tournament was called off), the
+  // Placecut (or the final settlement) follows on its own after a short look at the result.
+  st.deadline = st.callOff || placecutDue(st, now)
+    ? { kind: 'next_game', at: now + st.rules.nextGameSeconds * 1000 }
+    : st.roundEndsAt !== null && !st.wellCut.active ? { kind: 'next_game', at: Math.max(st.roundEndsAt, now + st.rules.nextGameSeconds * 1000) } : null;
 }
 
-/** After a game's result: the settlement (the admin then starts the next game), or the end when called off. */
+/** After a game: the final settlement when called off, the Placecut when the 20 minutes are up, otherwise the next game. */
 export function nextGame(st: State, now: number): GameEvent[] {
   if (st.phase !== 'game_over') fail('not_over', 'The game is still being played.');
   if (st.callOff) return endSession(st, now);
-  return enterPlacecut(st, now);
+  if (placecutDue(st, now)) return enterPlacecut(st, now);
+  return startNext(st, now);
 }
 
-function buildScorecard(st: State, now: number, final: boolean): Scorecard {
+function buildScorecard(st: State, now: number, kind: Scorecard['kind']): Scorecard {
   const rows = st.players.map((p) => rowFor(st, p, false));
   const last = st.history.at(-1);
   return {
-    round: st.game, at: now, final, games: st.game, results: last && last.game === st.game ? [last] : [],
+    kind, round: st.game, period: st.round, at: now, final: kind === 'final', games: st.game,
+    results: kind === 'game' && last && last.game === st.game ? [last] : [],
     totalPot: st.totalPot, totalBonus: st.totalBonus, wellCuts: st.wellCutCount, loansIssued: st.bankLoansTotal,
-    loans: st.p2p.map((l) => ({ ...l })), rows: [...rows, ...(final ? st.departed : [])],
+    loans: st.p2p.map((l) => ({ ...l })), loanLog: kind === 'game' ? [] : [...st.p2pLog],
+    rows: [...rows, ...(kind === 'final' ? st.departed : [])],
   };
 }
 
 function saveCard(st: State, card: Scorecard) {
-  if (st.scorecards.at(-1)?.round === card.round) st.scorecards[st.scorecards.length - 1] = card;
-  else st.scorecards.push(card);
+  st.scorecards.push(card);
   if (st.scorecards.length > CARDS_TAIL) st.scorecards.splice(0, st.scorecards.length - CARDS_TAIL);
   st.cardOutbox.push(card);
 }
 
-/** Settlement after every game: scorecard for everyone, join/leave, then the admin starts the next game. */
+/** §14 Placecut: settlement scorecards for everyone, join/leave, then the admin starts the next 20 minutes. */
 function enterPlacecut(st: State, now: number): GameEvent[] {
   st.phase = 'placecut';
   st.turn = -1;
   st.deadline = null;
-  saveCard(st, buildScorecard(st, now, false));
-  return [{ e: 'placecut', round: st.game }];
+  st.roundEndsAt = null;
+  saveCard(st, buildScorecard(st, now, 'placecut'));
+  st.players.forEach((p, i) => tx(st, now, i, 'placecut', 0, `Placecut ${st.round}: balance ${p.coins}, bank loan ${p.loan}, owes players ${owesPlayers(st, p.uid)}, owed ${owedByPlayers(st, p.uid)}`));
+  return [{ e: 'placecut', round: st.round }];
 }
 
 function endSession(st: State, now: number): GameEvent[] {
-  if (st.game > 0) saveCard(st, buildScorecard(st, now, true));
+  if (st.game > 0) saveCard(st, buildScorecard(st, now, 'final'));
   st.phase = 'ended';
   st.deadline = null;
   st.turn = -1;
@@ -935,7 +990,12 @@ export function onDeadline(st: State, now: number): GameEvent[] {
   if (!d || now < d.at) return [];
   switch (d.kind) {
     case 'next_game':
-      return st.phase === 'game_over' ? nextGame(st, now) : [];
+      // Only the final settlement or the Placecut start on their own; the admin starts ordinary next games.
+      if (st.phase !== 'game_over') return [];
+      if (st.callOff) return endSession(st, now);
+      if (placecutDue(st, now)) return enterPlacecut(st, now);
+      st.deadline = null;
+      return [];
     case 'cut':
       return st.phase === 'cutting' ? cut(st, null, now, now) : [];
     case 'deal':
@@ -961,6 +1021,7 @@ export interface PlayerView {
   you: number;
   isAdmin: boolean;
   round: number;
+  roundEndsAt: number | null;
   callOff: boolean;
   timerOn: boolean;
   tableSize: number;
@@ -1014,6 +1075,8 @@ export interface PlayerView {
     /** The player before you played Blind: you must play Seen (2 coins) or pack. */
     mustSeen: boolean;
     startGame: boolean; callOff: boolean; leave: boolean; tableSize: boolean;
+    /** After a game: the 20 minutes are up, so the admin's button opens the Placecut. */
+    placecutDue: boolean;
   };
 }
 
@@ -1039,7 +1102,7 @@ export function viewFor(st: State, uid: string): PlayerView {
   const myReq = mine ? st.requests.find((r) => r.from === mine.uid) : undefined;
   const lastCard = st.scorecards.at(-1) ?? null;
   return {
-    phase: st.phase, you: me, isAdmin, round: st.round, callOff: st.callOff, timerOn: st.timerOn,
+    phase: st.phase, you: me, isAdmin, round: st.round, roundEndsAt: st.roundEndsAt, callOff: st.callOff, timerOn: st.timerOn,
     tableSize: st.tableSize, minPlayers: st.rules.minPlayers, maxPlayers: st.rules.maxPlayers,
     game: st.game, roundGames: st.roundGames, dealer: d, cutter: cutterSeat(st), turn: st.turn, pot: st.pot, cardsEach: st.cardsEach,
     wellCut: { active: st.wellCut.active, game: wellCutGameNo(st), sequence: st.rules.wellCutSequence },
@@ -1062,7 +1125,7 @@ export function viewFor(st: State, uid: string): PlayerView {
     commit: st.commit,
     result: over ? st.result : null,
     deadline: st.deadline,
-    scorecard: st.phase === 'placecut' || st.phase === 'ended' ? lastCard : null,
+    scorecard: st.phase === 'placecut' || st.phase === 'ended' || st.phase === 'game_over' ? lastCard : null,
     ledger: st.ledger.slice(-80),
     yourHand: mine && mine.seen && mine.cards.length ? evaluate(mine.cards).name : null,
     options: {
@@ -1077,7 +1140,8 @@ export function viewFor(st: State, uid: string): PlayerView {
       loan: mine && st.phase !== 'ended' && loanLeft(st, me) > 0 ? { left: loanLeft(st, me), needed } : null,
       borrow: !!mine && st.phase !== 'ended' && canBorrowFromPlayers(st, me),
       mustSeen: forced,
-      startGame: isAdmin && between && st.players.filter((_, i) => canPlay(st, i)).length >= st.rules.minPlayers,
+      startGame: isAdmin && ((between && st.players.filter((_, i) => canPlay(st, i)).length >= st.rules.minPlayers) || (st.phase === 'game_over' && !st.callOff)),
+      placecutDue: st.phase === 'game_over' && placecutDue(st, Date.now()),
       callOff: isAdmin && st.phase !== 'ended' && !st.callOff,
       leave: !!mine && !isAdmin && (atBoundary(st) || st.phase === 'ended'),
       tableSize: isAdmin && atBoundary(st),
@@ -1089,7 +1153,7 @@ export function viewFor(st: State, uid: string): PlayerView {
 export function sessionReport(st: State) {
   return {
     createdAt: st.createdAt, rounds: st.round, games: st.game, wellCuts: st.wellCutCount,
-    totalPot: st.totalPot, totalBonus: st.totalBonus, bankLoans: st.bankLoansTotal, loans: st.p2p,
+    totalPot: st.totalPot, totalBonus: st.totalBonus, bankLoans: st.bankLoansTotal, loans: st.p2p, loanLog: st.p2pLog,
     scorecards: st.scorecards,
     players: st.players.map((p) => rowFor(st, p, false)),
     departed: st.departed,

@@ -183,3 +183,12 @@ button.chip-tag b{color:var(--ivory)}
 /* forced Seen after a Blind */
 .ab.chaal.must{box-shadow:0 0 0 2px var(--seen), 0 0 18px rgba(255,181,71,.45)}
 .ab.chaal.must small{color:#1A1206; font-weight:800}
+
+/* individual game settlement in the result sheet */
+.game-settle{margin:0 18px 12px; padding:10px 12px; border-radius:14px; background:var(--night); border:1px solid var(--line); display:flex; flex-direction:column; gap:4px; font-size:13px}
+.game-settle small{color:var(--muted); font-size:11px; margin-bottom:2px}
+.game-settle span{display:flex; align-items:center; gap:8px}
+.game-settle b{flex:1; font-weight:600}
+.game-settle i{font-style:normal; font-weight:800; min-width:44px; text-align:right}
+.game-settle i.up{color:var(--win)} .game-settle i.down{color:#FF8A8E}
+.game-settle em{font-style:normal; color:var(--muted); min-width:44px; text-align:right}

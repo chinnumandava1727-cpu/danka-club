@@ -55,10 +55,10 @@ export class Room extends DurableObject<Env> {
       id INTEGER PRIMARY KEY, at INTEGER, round INTEGER, game INTEGER, uid TEXT, name TEXT,
       type TEXT, amount INTEGER, balance INTEGER, note TEXT)`);
     // Every settlement of the tournament, kept for the final report.
-    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS settlements (game INTEGER PRIMARY KEY, final INTEGER, json TEXT)');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS settlements_v2 (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, game INTEGER, period INTEGER, json TEXT)');
     ctx.blockConcurrencyWhile(async () => {
       const saved = await ctx.storage.get<Saved>('room');
-      this.s = saved && saved.game?.v === 3 ? saved : null;
+      this.s = saved && saved.game?.v === 4 ? saved : null;
     });
   }
 
@@ -77,6 +77,7 @@ export class Room extends DurableObject<Env> {
     const now = Date.now();
     const rules = { ...DANKA_RULES, wellCutSequence: [...DANKA_RULES.wellCutSequence] };
     if (this.env.AUTH_MODE === 'dev') {
+      if (Number(this.env.DEV_ROUND_SECONDS) > 0) rules.roundMinutes = Number(this.env.DEV_ROUND_SECONDS) / 60;
       if (Number(this.env.DEV_NEXT_GAME_SECONDS) > 0) rules.nextGameSeconds = Number(this.env.DEV_NEXT_GAME_SECONDS);
       if (Number(this.env.DEV_STARTING_COINS) > 0) rules.startingCoins = Number(this.env.DEV_STARTING_COINS);
       if (Number(this.env.DEV_MAX_LOAN) >= 0 && this.env.DEV_MAX_LOAN !== undefined) rules.maxLoan = Number(this.env.DEV_MAX_LOAN);
@@ -105,7 +106,7 @@ export class Room extends DurableObject<Env> {
       seats: g.players.length,
       tableSize: g.tableSize,
       full: g.players.length >= g.tableSize,
-      joinable: g.phase === 'lobby' || (g.phase === 'placecut' && !g.wellCut.active),
+      joinable: g.phase === 'lobby' || g.phase === 'placecut',
       closed: g.phase === 'ended',
       expired: this.expired(),
       players: g.players.map((p) => p.name),
@@ -217,7 +218,7 @@ export class Room extends DurableObject<Env> {
         case 'report': {
           if (me.uid !== g.adminUid) return this.send(ws, { t: 'error', code: 'not_admin', message: 'Only the admin can export the settlement report.' });
           const ledger = this.ctx.storage.sql.exec('SELECT * FROM ledger ORDER BY id').toArray() as unknown as Tx[];
-          const scorecards = this.ctx.storage.sql.exec('SELECT json FROM settlements ORDER BY game').toArray().map((r) => JSON.parse(String(r.json)) as Scorecard);
+          const scorecards = this.ctx.storage.sql.exec('SELECT json FROM settlements_v2 ORDER BY id').toArray().map((r) => JSON.parse(String(r.json)) as Scorecard);
           return this.send(ws, { t: 'report', report: { ...sessionReport(g), scorecards, ledger, code: this.s.code } });
         }
         default:
@@ -306,7 +307,7 @@ export class Room extends DurableObject<Env> {
     }
     g.outbox = [];
     for (const c of g.cardOutbox ?? []) {
-      this.ctx.storage.sql.exec('INSERT OR REPLACE INTO settlements (game, final, json) VALUES (?, ?, ?)', c.round, c.final ? 1 : 0, JSON.stringify(c));
+      this.ctx.storage.sql.exec('INSERT INTO settlements_v2 (kind, game, period, json) VALUES (?, ?, ?, ?)', c.kind, c.round, c.period, JSON.stringify(c));
     }
     g.cardOutbox = [];
   }

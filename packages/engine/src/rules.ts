@@ -23,6 +23,8 @@ export interface DankaRules {
   wellCutSequence: number[];
   /** Turn timer, used only when the admin switches it on (off by default). On time-out the player packs. */
   turnSeconds: number;
+  /** §14 Length of a playing period; Placecut follows the game in progress when it ends. */
+  roundMinutes: number;
   /** Pause between the end of one game and the start of the next. */
   nextGameSeconds: number;
   /**
@@ -52,6 +54,7 @@ export const DANKA_RULES: Readonly<DankaRules> = Object.freeze({
   normalCards: 3,
   wellCutSequence: [4, 3, 2, 1],
   turnSeconds: 30,
+  roundMinutes: 20,
   nextGameSeconds: 8,
   wellCutZone: 1.5,
   cutBarPassMs: 600,

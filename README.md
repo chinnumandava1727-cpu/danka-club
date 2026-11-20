@@ -21,8 +21,10 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   decline they can ask someone else. Accepted coins move at once (existing coins, never new ones) and the borrower
   owes that lender until the tournament closes. A player with no coins and no loan sits a game out but stays.
 - Blind costs 1, Seen costs 2. Seeing your cards makes you Seen. Pack any time on your turn.
-- **No two Blind players in a row** when 3+ are active: after a Blind bet the next active player must play Seen
-  (a fold doesn't reset it). With only two players left both may play Blind freely, with no three-Blind limit.
+- **Blind/Seen rotation:** before anyone in a game has played Seen, Blind is unrestricted and nobody is forced to
+  open their cards. After the first Seen (3+ active), a Blind bet forces the next active player to play Seen; if that
+  player folds, the next active player must play Seen. With only two players left the restriction and the
+  three-Blind limit are removed.
 - Show only when two players remain, priced automatically (Blind 1, Seen 2). A Blind player can't Show against another Blind player.
 - When everyone else is Seen, the last Blind player gets 3 more Blind turns, then their cards are shown automatically.
 - Sideshow only when every active player is Seen: with the next active player on your left, costs 2, can't be refused,
@@ -39,10 +41,12 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   A Sequence needs every card in a different suit; Colour needs every card in one suit. Ties: sort highest first,
   compare values, then suits card by card (Spades > Hearts > Diamonds > Clubs), so there is never a draw.
 - Bonus N×(N−1), only when the holder wins the game: Three of a Kind in normal 3-card games, Four of a Kind in Well Cut game 1.
-- **Tournament:** after every game there is a settlement (scorecard for everyone; join and leave only here, never
-  between the four Well Cut games). The admin presses Start next game. Nothing resets: balances, totals, bonuses,
-  bank and player loans, settlements and the full history carry forward until the admin calls off the tournament
-  (the current game finishes first). There is no round clock.
+- **Tournament:** the admin starts a 20-minute period (server clock). Games follow one another; after each game its
+  settlement is shown and the admin starts the next game. When the 20 minutes are up, the game in progress finishes
+  (a Well Cut sequence too) and **Placecut** opens: settlement scorecards, players may join (100 coins) or leave, and
+  the admin starts the next 20 minutes. Nothing ever resets: balances, totals, bonuses, bank and player loans (each
+  recorded with lender, borrower, amount, game and time), settlements and the full history carry forward until the
+  admin calls off the tournament (the current game finishes first).
 - Admin: start each game, table size, turn timer on/off (off by default; time out = pack), call off the session,
   export the settlement PDF. The admin can't see cards, touch the shuffle or edit balances; admin actions are logged.
 - Fairness: crypto shuffle of a fresh deck every game, SHA-256 fingerprint of `deck|salt` published before the cut,
@@ -59,7 +63,7 @@ npm test                 # engine unit tests
 npm run build            # build the web game into app/dist
 npm run dev              # local server + game on http://127.0.0.1:8787
 # bots play a tournament against a local server:
-cd server && npx wrangler dev --port 8787 --ip 127.0.0.1 --var AUTH_MODE:dev --var DEV_NEXT_GAME_SECONDS:1
+cd server && npx wrangler dev --port 8787 --ip 127.0.0.1 --var AUTH_MODE:dev --var DEV_ROUND_SECONDS:40 --var DEV_NEXT_GAME_SECONDS:1
 # add --var DEV_STARTING_COINS:8 --var DEV_MAX_LOAN:4 to exercise player loans quickly (dev mode only)
 node server/scripts/sim.mjs   # in another terminal
 ```

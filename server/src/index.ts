@@ -10,7 +10,8 @@ export interface Env {
   ASSETS: Fetcher;
   AUTH_MODE: string;
   FIREBASE_PROJECT_ID: string;
-  /** Test only, honoured when AUTH_MODE is "dev": a shorter pause after each game for the bot simulation. */
+  /** Test only, honoured when AUTH_MODE is "dev": shorter periods and pauses for the bot simulation. */
+  DEV_ROUND_SECONDS?: string;
   DEV_NEXT_GAME_SECONDS?: string;
   DEV_STARTING_COINS?: string;
   DEV_MAX_LOAN?: string;

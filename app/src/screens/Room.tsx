@@ -159,7 +159,8 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
       switch (e.e) {
         case 'joined': if (!e.rejoined && e.seat !== you) { play('knock'); buzz(HAP.land); toast(`${e.name} joined the table`); } break;
         case 'left': toast(`${e.name} left the table`); break;
-        case 'start': play('gong'); buzz(HAP.rise); showBanner({ kind: 'round', title: `Game ${e.game}`, sub: v.wellCut.active ? `Well Cut game ${v.wellCut.game} of 4` : 'Shuffling a fresh deck' }, 1800); break;
+        case 'period': play('gong'); buzz(HAP.rise); showBanner({ kind: 'round', title: `${Math.max(1, Math.round((e.endsAt - Date.now()) / 60000))} minutes`, sub: `Period ${e.round} · Placecut when the clock runs out` }, 2200); break;
+        case 'start': play('chime'); setSheet((s) => (s === 'result' ? null : s)); break;
         case 'game': if (e.wellCutGame && e.wellCutGame > 1) { play('chime'); showBanner({ kind: 'wellcut', title: `Well Cut · game ${e.wellCutGame} of 4`, sub: `${e.cardsEach} card${e.cardsEach === 1 ? '' : 's'} each` }, 2200); } break;
         case 'commit': shuffleDeck(); play('shuffle'); break;
         case 'cut': {
@@ -433,10 +434,10 @@ function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin }: { vie
           );
         })}
       </div>
-      <p className="rule-note">Everyone starts with {view.rules.startingCoins} coins. The admin deals game 1, then each winner deals. After every game there is a settlement; new players can join then, and the admin starts the next game.</p>
+      <p className="rule-note">Everyone starts with {view.rules.startingCoins} coins. The admin deals game 1, then each winner deals. Every 20 minutes, after the game in progress, there is a Placecut: settlement, and players can join or leave.</p>
       <div className="lobby-actions" style={{ gridTemplateColumns: '1fr' }}>
         {isAdmin
-          ? <button className="btn gold" disabled={!view.options.startGame} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>{n < view.minPlayers ? `Waiting for players (${n}/${view.minPlayers})` : `Start game 1 with ${n}`}</button>
+          ? <button className="btn gold" disabled={!view.options.startGame} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>{n < view.minPlayers ? `Waiting for players (${n}/${view.minPlayers})` : `Start 20 minutes with ${n}`}</button>
           : <button className="btn gold" disabled>{me ? 'Waiting for the admin to start' : 'Joining…'}</button>}
       </div>
     </section>
@@ -472,16 +473,16 @@ function Placecut({ view, code, client, toast, exporting, onExport, onExit, onSe
   const rows = card ? [...card.rows].sort((a, b) => b.net - a.net) : [];
   const [open, setOpen] = useState<string | null>(null);
   const g = card?.results[0];
-  const wcNext = !ended && view.wellCut.active;
+  const wcNext = false;
   return (
     <section className="screen" id="lobby" aria-label={ended ? 'Final settlement' : 'Settlement'}>
       <div className="bar">
         <button className="icon-btn" aria-label="Home" onClick={() => onExit()}><Icon name="home" /></button>
-        <h2>{ended ? 'Final settlement' : `Settlement · game ${view.game}`}</h2>
+        <h2>{ended ? 'Final settlement' : `Placecut · period ${view.round}`}</h2>
         {view.isAdmin && !ended && <button className="icon-btn" style={{ marginLeft: 'auto' }} aria-label="Admin controls" onClick={() => { play('tap'); onAdmin(); }}><Icon name="crown" /></button>}
         <button className="icon-btn" style={view.isAdmin && !ended ? undefined : { marginLeft: 'auto' }} aria-label="Settings" onClick={onSettings}><Icon name="sliders" /></button>
       </div>
-      {g && (
+      {g && card?.kind === 'game' && (
         <div className="last-game">
           <b>{g.winner} won {fmt(g.pot)}{g.bonus ? ` + bonus ${fmt(g.bonus)}` : ''}</b>
           <span>Game {g.game} · {g.wellCutGame ? `Well Cut ${g.wellCutGame}/4 · ` : ''}{g.cardsEach} card{g.cardsEach === 1 ? '' : 's'} · {g.reason === 'show' ? 'won at Show' : 'everyone else packed'}</span>
@@ -501,7 +502,7 @@ function Placecut({ view, code, client, toast, exporting, onExport, onExit, onSe
           <button key={r.name} className={`score-row${open === r.name ? ' open' : ''}${r.eliminated ? ' out' : ''}`} onClick={() => { play('tap'); setOpen(open === r.name ? null : r.name); }}>
             <span className="sr-top">
               <span className="who"><b>{r.name}{me && r.name === me.name ? ' (you)' : ''}{r.left ? ' (left)' : ''}</b>
-                <small>Balance {fmt(r.balance)}{r.change ? <> · <span className={r.change > 0 ? 'up' : 'down'}>{sgn(r.change)} this game</span></> : ''}{r.outstandingLoan ? ` · bank ${fmt(r.outstandingLoan)}` : ''}{r.owesPlayers ? ` · owes ${fmt(r.owesPlayers)}` : ''}{r.owedByPlayers ? ` · owed ${fmt(r.owedByPlayers)}` : ''}{r.eliminated ? ' · no coins' : ''}</small></span>
+                <small>Balance {fmt(r.balance)}{r.periodChange ? <> · <span className={r.periodChange > 0 ? 'up' : 'down'}>{sgn(r.periodChange)} this period</span></> : ''}{r.outstandingLoan ? ` · bank ${fmt(r.outstandingLoan)}` : ''}{r.owesPlayers ? ` · owes ${fmt(r.owesPlayers)}` : ''}{r.owedByPlayers ? ` · owed ${fmt(r.owedByPlayers)}` : ''}{r.eliminated ? ' · no coins' : ''}</small></span>
               <span className={`net num ${r.net >= 0 ? 'up' : 'down'}`}>{sgn(r.net)}</span>
             </span>
             {open === r.name && (
@@ -510,7 +511,7 @@ function Placecut({ view, code, client, toast, exporting, onExport, onExit, onSe
                 <span>Winnings <b>{fmt(r.winnings)}</b></span><span>Losses <b>{fmt(r.losses)}</b></span><span>Balance <b>{fmt(r.balance)}</b></span>
                 <span>Initial <b>{fmt(r.initial)}</b></span><span>Bank loans <b>{fmt(r.loanTotal)}</b></span><span>Bank owed <b>{fmt(r.outstandingLoan)}</b></span>
                 <span>Owes players <b>{fmt(r.owesPlayers)}</b></span><span>Owed by players <b>{fmt(r.owedByPlayers)}</b></span><span>Net <b>{sgn(r.net)}</b></span>
-                <span>Bonus in <b>{fmt(r.bonusIn)}</b></span><span>Bonus out <b>{fmt(r.bonusOut)}</b></span><span>This game <b>{sgn(r.change)}</b></span>
+                <span>Bonus in <b>{fmt(r.bonusIn)}</b></span><span>Bonus out <b>{fmt(r.bonusOut)}</b></span><span>This period <b>{sgn(r.periodChange)}</b></span>
               </span>
             )}
           </button>
@@ -533,7 +534,7 @@ function Placecut({ view, code, client, toast, exporting, onExport, onExit, onSe
       </div>
       <p className="rule-note">{ended ? 'The tournament is over. Net = balance − 100 starting coins − bank loan − owed to players + owed by players. Coins have no cash value.'
         : wcNext ? `Well Cut game ${view.wellCut.game} of 4 is next. Nobody joins or leaves until the four Well Cut games are done.`
-        : 'Nothing resets: balances, loans and totals carry into the next game. New players can join now, and anyone can leave.'}</p>
+        : 'Placecut is only a break: nothing resets. Balances, loans and totals carry into the next 20 minutes. New players can join now, and anyone can leave.'}</p>
       {!ended && !wcNext && <InviteCard code={code} toast={toast} />}
       {!ended && view.options.borrow && (
         <button className="btn line borrow-cta" onClick={() => { play('tap'); onBorrow(); }}><Icon name="bank" />{view.myRequest ? `Waiting for ${view.players[view.myRequest.to]?.name}…` : 'Borrow from a player'}</button>
@@ -544,7 +545,7 @@ function Placecut({ view, code, client, toast, exporting, onExport, onExit, onSe
             <button className="btn line" disabled={exporting} onClick={onExport}><Icon name="file" />{exporting ? 'Making PDF…' : 'Export PDF'}</button>
             {ended
               ? <button className="btn gold" onClick={() => onExit()}>Back to home</button>
-              : <button className="btn gold" disabled={!view.options.startGame} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>Start game {view.game + 1}</button>}
+              : <button className="btn gold" disabled={!view.options.startGame} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>Start next 20 minutes</button>}
           </>
           : ended
             ? <button className="btn gold" onClick={() => onExit()}>Back to home</button>
@@ -630,6 +631,8 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
   };
 
   const dl = view.deadline && view.deadline.kind !== 'next_game' ? Math.max(0, Math.ceil((view.deadline.at - now) / 1000)) : null;
+  const left = view.roundEndsAt ? view.roundEndsAt - now : 0;
+  const clock = view.roundEndsAt === null ? '—' : left > 0 ? mmss(left) : view.wellCut.active ? 'Well Cut' : 'Last game';
   const dealerName = view.players[view.dealer]?.name ?? '';
   const cutterName = view.players[view.cutter]?.name ?? '';
   const turnP = view.players[view.turn];
@@ -659,7 +662,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
       <div className="topbar">
         <button className="icon-btn" aria-label="Step away" onClick={() => { play('tap'); onSheet('leave'); }}><Icon name="home" /></button>
         <span className="room-chip">{code}</span>
-        <span className="hand-no num">Game {view.game}{view.wellCut.active ? ` · WC ${view.wellCut.game}/4` : ''}</span>
+        <span className="hand-no num"><span className={`clock${left > 0 && left < 120_000 ? ' low' : ''}`}><Icon name="clock" />{clock}</span> G{view.game}</span>
         <span className={`signal ${quality.q}`} role="img" aria-label={quality.q === 'offline' ? 'Offline' : `Connection ${quality.q}, ${Math.round(quality.rtt)} ms`} title={quality.q === 'offline' ? 'Offline' : `${Math.round(quality.rtt)} ms`}><i /><i /><i /></span>
         <button className="icon-btn" aria-label="Ledger" onClick={() => { play('tap'); onSheet('ledger'); }}><Icon name="ledger" /></button>
         {view.isAdmin
@@ -723,7 +726,11 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
       </div>
       <div className="actions">
         <div className="status-line">{dealing && dealRound ? `${dealerName === me?.name ? 'You are' : `${dealerName} is`} dealing · ${['1st', '2nd', '3rd', '4th'][dealRound.r - 1]} card to everyone` : status}</div>
-        {o.cut ? (
+        {view.phase === 'game_over' && view.isAdmin && !view.callOff ? (
+          <div className="abtns">
+            <button className="ab cut-stop" style={{ fontSize: 20 }} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>{o.placecutDue ? 'GO TO PLACECUT' : 'NEXT GAME'}</button>
+          </div>
+        ) : o.cut ? (
           <div className="abtns">
             <button className="ab cut-stop" onPointerDown={(e) => { e.preventDefault(); window.dispatchEvent(new Event('danka-stop')); }}>STOP</button>
           </div>
@@ -945,9 +952,21 @@ function ResultSheet({ open, view, client, verify, onVerify }: { open: boolean; 
           ? <><span className="ok">✓ Fingerprint matches</span>: the deck was fixed before the cut and not changed during the game.<br />Fingerprint: <code>{r.commit.slice(0, 16)}…</code><br />Deck order: <code>{r.deck}</code></>
           : <span style={{ color: '#FF8A8E' }}>✗ Mismatch: this deck does not match the fingerprint.</span>}
       </div>
+      {view.scorecard?.kind === 'game' && (
+        <div className="game-settle">
+          <small>Game {r.game} settlement</small>
+          {[...view.scorecard.rows].filter((x) => x.change !== 0).sort((a, b) => b.change - a.change).map((x) => (
+            <span key={x.name}><b>{x.name}</b><i className={x.change > 0 ? 'up' : 'down'}>{sgn(x.change)}</i><em className="num">{fmt(x.balance)}</em></span>
+          ))}
+        </div>
+      )}
       <div className="res-btns">
         <button className="btn line" onClick={onVerify}>Verify fairness</button>
-        <button className="btn gold" disabled>{view.callOff ? 'Tournament ending…' : `Settlement in ${left}`}</button>
+        {view.callOff
+          ? <button className="btn gold" disabled>Final settlement in {left}</button>
+          : view.isAdmin
+            ? <button className="btn gold" onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>{view.options.placecutDue ? 'Go to Placecut' : 'Next game'}</button>
+            : <button className="btn gold" disabled>{view.options.placecutDue ? `Placecut in ${left}` : `Waiting for ${view.players.find((p) => p.isAdmin)?.name ?? 'the admin'}…`}</button>}
       </div>
     </div>
   );
