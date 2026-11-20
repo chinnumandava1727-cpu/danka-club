@@ -20,6 +20,9 @@ export type ClientMsg =
   | { t: 'p2p_ask'; to: number; amount: number }
   | { t: 'p2p_answer'; id: number; accept: boolean }
   | { t: 'p2p_cancel' }
+  /** Admin, at the waiting room or Placecut: seat a computer player, or remove one. */
+  | { t: 'add_bot' }
+  | { t: 'remove_bot'; seat: number }
   | { t: 'leave' }
   | { t: 'report' }
   | { t: 'react'; to: number; kind: Throwable }

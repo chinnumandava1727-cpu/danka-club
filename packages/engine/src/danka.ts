@@ -281,6 +281,8 @@ export interface State {
   p2p: P2PLoan[];
   requests: LoanRequest[];
   reqSeq: number;
+  /** "borrower>lender" pairs declined in the current game (so a borrower moves on to someone else). */
+  declines: string[];
   lastCut: CutInfo | null;
   cutBar: CutBar | null;
   commit: string | null;
@@ -391,7 +393,7 @@ export function createRoom(opts: { rules: DankaRules; admin: { uid: string; name
     players: [], departed: [], phase: 'lobby', round: 0, roundEndsAt: null, callOff: false, timerOn: false,
     game: 0, roundGames: 0, dealerUid: opts.admin.uid, turn: -1, pot: 0, cardsEach: r.normalCards, dealt: [],
     wellCut: { active: false, index: 0 }, wellCutCount: 0, bankLoansTotal: 0, totalPot: 0, totalBonus: 0, lastBet: null, seenStarted: false, p2pLog: [],
-    p2p: [], requests: [], reqSeq: 0, lastCut: null, cutBar: null,
+    p2p: [], requests: [], reqSeq: 0, declines: [], lastCut: null, cutBar: null,
     commit: null, secret: null, result: null, deadline: null, history: [], scorecards: [], cardOutbox: [], ledger: [], outbox: [], txSeq: 0,
   };
   join(st, opts.admin.uid, opts.admin.name, opts.now);
@@ -399,6 +401,10 @@ export function createRoom(opts: { rules: DankaRules; admin: { uid: string; name
 }
 
 /** §2 Join, or reconnect to your own seat. New players join only before the first game or at a settlement. */
+/** Computer players have uids starting with this prefix; they are seated and played by the server. */
+export const BOT_PREFIX = 'cpu:';
+export const isBotUid = (uid: string) => uid.startsWith(BOT_PREFIX);
+
 export function join(st: State, uid: string, name: string, now: number): { seat: number; events: GameEvent[] } {
   const existing = seatOf(st, uid);
   if (existing >= 0) {
@@ -525,6 +531,7 @@ function beginGame(st: State, now: number): GameEvent[] {
   st.pot = 0;
   st.lastBet = null;
   st.seenStarted = false;
+  st.declines = [];
   st.turn = -1;
   st.result = null;
   st.commit = null;
@@ -833,7 +840,10 @@ export function answerPlayerLoan(st: State, uid: string, id: number, accept: boo
   if (accept && st.players[li].coins < r.amount) fail('lender_short', `You have only ${st.players[li].coins} coins available now.`);
   st.requests.splice(k, 1);
   if (bi < 0) return [];
-  if (!accept) return [{ e: 'p2p_answer', id, from: bi, to: li, amount: r.amount, accepted: false }];
+  if (!accept) {
+    st.declines.push(`${r.from}>${r.to}`);
+    return [{ e: 'p2p_answer', id, from: bi, to: li, amount: r.amount, accepted: false }];
+  }
   const lender = st.players[li], borrower = st.players[bi];
   // Existing coins move from lender to borrower; no new coins are created.
   lender.coins -= r.amount;
@@ -1043,6 +1053,8 @@ export interface PlayerView {
   rules: { blind: number; seen: number; sideshow: number; maxLoan: number; startingCoins: number; extraBlinds: number; turnSeconds: number; wellCutZone: number };
   players: {
     name: string; coins: number; loan: number; status: PlayerStatus; seen: boolean; connected: boolean;
+    /** A computer player. */
+    bot: boolean;
     cardCount: number; cards: string[] | null; isAdmin: boolean; isDealer: boolean;
     /** Extra Blind actions left (§9), when this player is the only Blind one left. */
     extraBlindsLeft: number | null;
@@ -1111,7 +1123,7 @@ export function viewFor(st: State, uid: string): PlayerView {
     cutBar: st.phase === 'cutting' ? st.cutBar : null,
     rules: { blind: st.rules.blindCost, seen: st.rules.seenCost, sideshow: st.rules.sideshowCost, maxLoan: st.rules.maxLoan, startingCoins: st.rules.startingCoins, extraBlinds: st.rules.extraBlindActions, turnSeconds: st.rules.turnSeconds, wellCutZone: st.rules.wellCutZone },
     players: st.players.map((p, i) => ({
-      name: p.name, coins: p.coins, loan: p.loan, status: p.status, seen: p.seen, connected: p.connected,
+      name: p.name, coins: p.coins, loan: p.loan, status: p.status, seen: p.seen, connected: p.connected, bot: isBotUid(p.uid),
       cardCount: p.cards.length, cards: i === me || shown.includes(i) ? p.cards.map(cardCode) : null,
       isAdmin: p.uid === st.adminUid, isDealer: i === d,
       extraBlindsLeft: st.phase === 'betting' && onlyBlindLeft(st, i) ? Math.max(0, st.rules.extraBlindActions - p.extraBlinds) : null,

@@ -42,15 +42,15 @@ export default {
 
       if (parts[0] !== 'api') return env.ASSETS ? env.ASSETS.fetch(req) : new Response('DANKA CLUB room server', { headers: CORS });
 
-      // POST /api/rooms  { seats }  → { code }
+      // POST /api/rooms  { seats, bots }  → { code }   (bots = computer players to seat at once)
       if (parts[1] === 'rooms' && parts.length === 2 && req.method === 'POST') {
         const me = await authenticate(bearer(req), env);
-        const body = (await req.json().catch(() => ({}))) as { seats?: number };
+        const body = (await req.json().catch(() => ({}))) as { seats?: number; bots?: number };
         for (let attempt = 0; attempt < 5; attempt++) {
           const code = generateRoomCode();
           const res = await roomStub(env, code).fetch('https://room/init', {
             method: 'POST',
-            body: JSON.stringify({ code, uid: me.uid, name: me.name, seats: Number(body.seats) || 7 }),
+            body: JSON.stringify({ code, uid: me.uid, name: me.name, seats: Number(body.seats) || 7, bots: Math.max(0, Math.min(9, Math.floor(Number(body.bots) || 0))) }),
           });
           if (res.status === 409) continue; // code already taken: try another
           return json({ code, joinUrl: `${url.origin}/j/${code}` }, 201);

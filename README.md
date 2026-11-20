@@ -47,6 +47,10 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   the admin starts the next 20 minutes. Nothing ever resets: balances, totals, bonuses, bank and player loans (each
   recorded with lender, borrower, amount, game and time), settlements and the full history carry forward until the
   admin calls off the tournament (the current game finishes first).
+- **Play with computer:** Home → Play with computer seats 1–9 computer players at once (solo play). The admin can
+  also add or remove computer players in the waiting room or at Placecut to fill seats. They are played by the server
+  with the same rules engine (`packages/engine/src/bots.ts`): human-like pauses, bets by hand strength, bank and
+  player loans, answers to loan requests.
 - Admin: start each game, table size, turn timer on/off (off by default; time out = pack), call off the session,
   export the settlement PDF. The admin can't see cards, touch the shuffle or edit balances; admin actions are logged.
 - Fairness: crypto shuffle of a fresh deck every game, SHA-256 fingerprint of `deck|salt` published before the cut,

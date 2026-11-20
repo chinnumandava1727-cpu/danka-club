@@ -45,12 +45,12 @@ export function App() {
     history.replaceState(null, '', location.pathname);
   };
 
-  const onCreate = async (seats: number) => {
+  const onCreate = async (seats: number, bots = 0) => {
     if (!me || busy) return;
     play('tap'); buzz(HAP.click); setBusy(true);
-    try { localStorage.setItem('danka-seats', String(seats)); } catch { /* ignore */ }
+    try { localStorage.setItem(bots ? 'danka-bots' : 'danka-seats', String(bots || seats)); } catch { /* ignore */ }
     try {
-      enterRoom(await createRoom(tokenFor(me), seats));
+      enterRoom(await createRoom(tokenFor(me), seats, bots));
     } catch (e) {
       play('error'); buzz(HAP.error); showToast((e as Error).message);
     } finally {
@@ -106,9 +106,11 @@ function NameScreen({ onDone }: { onDone: (name: string) => void }) {
   );
 }
 
-function Home(p: { me: Me; busy: boolean; onCreate: (seats: number) => void; onJoin: () => void; onSettings: () => void; onRename: () => void }) {
+function Home(p: { me: Me; busy: boolean; onCreate: (seats: number, bots?: number) => void; onJoin: () => void; onSettings: () => void; onRename: () => void }) {
   const [sizeOpen, setSizeOpen] = useState(false);
+  const [cpuOpen, setCpuOpen] = useState(false);
   const last = Number(localStorage.getItem('danka-seats')) || 7;
+  const lastBots = Number(localStorage.getItem('danka-bots')) || 4;
   return (
     <section className="screen" id="home" aria-label="Home">
       <div className="home-top">
@@ -125,14 +127,32 @@ function Home(p: { me: Me; busy: boolean; onCreate: (seats: number) => void; onJ
           <span className="t-ic"><Icon name="enter" /></span>
           <span><b>Join Room</b><span>Enter the 6-character code from WhatsApp</span></span>
         </button>
+        <button className="tile ghost cpu" onClick={() => { play('tap'); buzz(HAP.tick); setCpuOpen(true); }} disabled={p.busy}>
+          <span className="t-ic"><Icon name="robot" /></span>
+          <span><b>Play with computer</b><span>No friends free? Play against computer players</span></span>
+        </button>
         <div className="rules-card">
           <b>House rules</b>
           <span>100 coins each · Blind 1 · Seen 2 · Bank loan up to 100</span>
-          <span>Well Cut → 4 games of 4, 3, 2, 1 cards · 20-minute rounds</span>
+          <span>Well Cut → 4 games of 4, 3, 2, 1 cards · Placecut every 20 minutes</span>
         </div>
       </div>
       <p className="fine">Coins have no cash value.</p>
-      <div className={`scrim${sizeOpen ? ' on' : ''}`} onClick={() => setSizeOpen(false)} />
+      <div className={`scrim${sizeOpen || cpuOpen ? ' on' : ''}`} onClick={() => { setSizeOpen(false); setCpuOpen(false); }} />
+      <div className={`sheet${cpuOpen ? ' on' : ''}`} role="dialog" aria-label="Play with computer">
+        <div className="grab" />
+        <h3>How many computer players?</h3>
+        <div className="sheet-body">
+          <p className="note" style={{ margin: '0 0 12px' }}>They play by your house rules, pause like real players and bet by their cards. You are the admin: you start the games. Friends can still join with the room code at a Placecut.</p>
+          <div className="size-grid">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+              <button key={n} className={`size-btn${n === lastBots ? ' on' : ''}`} disabled={p.busy} onClick={() => { setCpuOpen(false); p.onCreate(n + 1, n); }}>
+                <b>{n}</b><span className="seats-dots">{Array.from({ length: n }, (_, i) => <i key={i} className="cpu" />)}</span><small>{n === 1 ? 'opponent' : 'opponents'}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
       <div className={`sheet${sizeOpen ? ' on' : ''}`} role="dialog" aria-label="How many players?">
         <div className="grab" />
         <h3>How many players?</h3>

@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
   type GameEvent, type Scorecard, type State, type Tx, DANKA_RULES, GameError, act, answerPlayerLoan, callOff, cancelPlayerLoan, commitmentInput, createRoom, cut, deal,
+  isBotUid, newBot, nextBotTask, runBot,
   deckString, freshDeck, join, leave, needsDeck, onDeadline, prepareDeck, randomHex, seatOf, sessionReport, setConnected, setTableSize,
   requestPlayerLoan, setTimer, sha256Hex, shuffle, startGame, takeLoan, viewFor,
 } from '@danka/engine';
@@ -14,6 +15,9 @@ interface Saved {
   seq: number;
   /** Recent action ids, so a resent action is never applied twice (§17). */
   recent: string[];
+  /** When the next computer player's move is due, and whose. */
+  botAt?: number | null;
+  botUid?: string | null;
 }
 
 interface Attachment {
@@ -72,7 +76,7 @@ export class Room extends DurableObject<Env> {
     return new Response('Not found', { status: 404 });
   }
 
-  private async init(body: { code: string; uid: string; name: string; seats?: number }): Promise<Response> {
+  private async init(body: { code: string; uid: string; name: string; seats?: number; bots?: number }): Promise<Response> {
     if (this.s) return Response.json({ error: 'exists' }, { status: 409 });
     const now = Date.now();
     const rules = { ...DANKA_RULES, wellCutSequence: [...DANKA_RULES.wellCutSequence] };
@@ -89,6 +93,10 @@ export class Room extends DurableObject<Env> {
       tableSize: body.seats,
     });
     this.s = { game, code: body.code, seq: 1, recent: [] };
+    // "Play with computer": seat the computer players straight away (the table grows to fit them).
+    const bots = Math.max(0, Math.min(game.rules.maxPlayers - 1, Number(body.bots) || 0));
+    if (bots) game.tableSize = Math.max(game.tableSize, bots + 1);
+    for (let k = 0; k < bots; k++) { const b = newBot(game); join(game, b.uid, b.name, now); }
     this.flushLedger();
     await this.persist();
     await this.scheduleAlarm();
@@ -199,6 +207,18 @@ export class Room extends DurableObject<Env> {
           return this.commit(answerPlayerLoan(g, me.uid, Number(msg.id), !!msg.accept, now));
         case 'p2p_cancel':
           return this.commit(cancelPlayerLoan(g, me.uid));
+        case 'add_bot': {
+          if (me.uid !== g.adminUid) return this.send(ws, { t: 'error', code: 'not_admin', message: 'Only the admin can add computer players.' });
+          if (g.players.length >= g.tableSize) setTableSize(g, me.uid, g.players.length + 1);
+          const b = newBot(g);
+          return this.commit(join(g, b.uid, b.name, now).events);
+        }
+        case 'remove_bot': {
+          if (me.uid !== g.adminUid) return this.send(ws, { t: 'error', code: 'not_admin', message: 'Only the admin can remove computer players.' });
+          const p = g.players[Number(msg.seat)];
+          if (!p || !isBotUid(p.uid)) return this.send(ws, { t: 'error', code: 'not_bot', message: 'That is not a computer player.' });
+          return this.commit(leave(g, p.uid, now));
+        }
         case 'call_off':
           return this.commit(callOff(g, me.uid, now));
         case 'timer':
@@ -273,7 +293,27 @@ export class Room extends DurableObject<Env> {
       this.s = null;
       return;
     }
-    await this.commit(onDeadline(this.s.game, now));
+    let events: GameEvent[] = [];
+    // a computer player's move
+    if (this.s.botAt && this.s.botUid && now >= this.s.botAt - 20) {
+      events = this.botMove(this.s.botUid, now);
+    }
+    events = events.concat(onDeadline(this.s.game, now));
+    await this.commit(events);
+  }
+
+  /** Play one computer move. A move the rules refuse falls back to packing, so a bot can never stall a table. */
+  private botMove(uid: string, now: number): GameEvent[] {
+    const g = this.s!.game;
+    try {
+      return runBot(g, uid, now);
+    } catch (e) {
+      if (!(e instanceof GameError)) throw e;
+      console.warn('bot move refused', uid, e.code);
+      try {
+        return g.phase === 'betting' && g.players[g.turn]?.uid === uid ? act(g, uid, { type: 'pack' }, now) : [];
+      } catch { return []; }
+    }
   }
 
   /* ---------------- internals ---------------- */
@@ -282,6 +322,9 @@ export class Room extends DurableObject<Env> {
   private async commit(events: GameEvent[]): Promise<void> {
     const s = this.s!;
     while (needsDeck(s.game)) events = events.concat(await this.shuffleIn());
+    const task = nextBotTask(s.game, Date.now());
+    s.botAt = task?.at ?? null;
+    s.botUid = task?.uid ?? null;
     s.seq++;
     this.flushLedger();
     await this.persist();
@@ -316,7 +359,9 @@ export class Room extends DurableObject<Env> {
     const g = this.s!.game;
     const d = g.deadline;
     const due = d ? d.at + (d.kind === 'turn' ? TURN_GRACE_MS : 0) : null;
-    const at = due ?? (g.phase === 'lobby' && g.round === 0 ? g.createdAt + ROOM_TTL_MS : null);
+    const bot = this.s!.botAt ?? null;
+    const next = due !== null && bot !== null ? Math.min(due, bot) : due ?? bot;
+    const at = next ?? (g.phase === 'lobby' && g.round === 0 ? g.createdAt + ROOM_TTL_MS : null);
     if (at) await this.ctx.storage.setAlarm(at);
     else await this.ctx.storage.deleteAlarm();
   }

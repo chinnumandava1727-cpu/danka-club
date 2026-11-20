@@ -422,14 +422,19 @@ function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin }: { vie
       <div className="seat-list">
         {Array.from({ length: size }, (_, i) => {
           const s = view.players[i];
-          if (!s) return <div key={i} className="lrow empty"><span className="ord">#{i + 1}</span>Open seat</div>;
+          if (!s) return (
+            <div key={i} className="lrow empty"><span className="ord">#{i + 1}</span>Open seat
+              {isAdmin && <button className="add-bot" onClick={() => { client.send({ t: 'add_bot' }); play('tap'); buzz(HAP.tick); }}><Icon name="robot" />Add computer</button>}
+            </div>
+          );
           return (
             <div key={i} className="lrow pop">
               <span className="ord">#{i + 1}</span>
               <span className="lav" style={{ background: colorOf(i) }}>{ini(s.name)}</span>
               <span className="who"><b>{i === view.you ? `${s.name} (you)` : s.name}</b>
-                <span className="badges">{s.isAdmin && <span className="badge">Admin</span>}{s.isDealer && <span className="badge deal">Deals game 1</span>}{!s.connected && <span className="badge">Offline</span>}</span></span>
+                <span className="badges">{s.isAdmin && <span className="badge">Admin</span>}{s.bot && <span className="badge cpu">Computer</span>}{s.isDealer && <span className="badge deal">Deals game 1</span>}{!s.connected && <span className="badge">Offline</span>}</span></span>
               <span className="ready ok num">{fmt(s.coins)}</span>
+              {isAdmin && s.bot && <button className="rm-bot" aria-label={`Remove ${s.name}`} onClick={() => { client.send({ t: 'remove_bot', seat: i }); play('tap'); }}>×</button>}
             </div>
           );
         })}
@@ -581,6 +586,12 @@ function AdminSheet({ open, view, client, exporting, onExport, onClose }: { open
             </span>
           </div>
         )}
+        {view.options.tableSize && (
+          <div className="set-row">
+            <span className="lbl"><b>Computer players</b><small>{view.players.filter((p) => p.bot).length} at the table. Add one to fill a seat; remove them in the waiting room.</small></span>
+            <button className="btn line" style={{ height: 40 }} disabled={view.players.length >= view.maxPlayers} onClick={() => { client.send({ t: 'add_bot' }); play('tap'); }}><Icon name="robot" />Add</button>
+          </div>
+        )}
         <div className="set-row">
           <span className="lbl"><b>Settlement PDF</b><small>Every round’s scorecard and the complete ledger.</small></span>
           <button className="btn line" style={{ height: 40 }} disabled={exporting || view.round === 0} onClick={onExport}><Icon name="file" />{exporting ? '…' : 'Export'}</button>
@@ -693,6 +704,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
                 <svg className="ring" viewBox="0 0 60 60"><circle className="bg" cx="30" cy="30" r="28" /><circle className="fg" cx="30" cy="30" r="28" /></svg>
                 <button className="av" style={{ background: colorOf(i) }} aria-label={`${s.name}: throw something`} onClick={() => { play('tap'); buzz(HAP.tick); onReact(i); }}>{ini(s.name)}</button>
                 <span className={`dot${s.connected ? '' : ' amber'}`} />
+                {s.bot && <span className="cpu-badge" aria-label="Computer player">CPU</span>}
                 <div className="bubble" />
                 <div className="minis">{(cardsVisible || dealing) && s.status !== 'eliminated' && Array.from({ length: dealing ? Math.min(s.cardCount, landed) : s.cardCount }, (_, c) => <div key={c} className="mini back" />)}</div>
               </div>

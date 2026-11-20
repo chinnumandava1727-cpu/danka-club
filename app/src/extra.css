@@ -192,3 +192,14 @@ button.chip-tag b{color:var(--ivory)}
 .game-settle i{font-style:normal; font-weight:800; min-width:44px; text-align:right}
 .game-settle i.up{color:var(--win)} .game-settle i.down{color:#FF8A8E}
 .game-settle em{font-style:normal; color:var(--muted); min-width:44px; text-align:right}
+
+/* computer players */
+.tile.cpu .t-ic{background:linear-gradient(135deg,#6FB7E0,#3D7BA8)}
+.tile .t-ic svg{stroke:currentColor; fill:none; stroke-width:2}
+.seats-dots i.cpu{background:#6FB7E0}
+.badge.cpu{background:rgba(111,183,224,.18); color:#8FCBEF}
+.cpu-badge{position:absolute; left:50%; bottom:-6px; transform:translateX(-50%); padding:0 5px; border-radius:6px; background:#3D7BA8; color:#fff; font:800 8.5px/14px var(--body); letter-spacing:.06em; box-shadow:0 1px 3px rgba(0,0,0,.5); pointer-events:none}
+.lrow.empty{display:flex; align-items:center}
+.add-bot{margin-left:auto; display:inline-flex; align-items:center; gap:5px; height:30px; padding:0 10px; border-radius:9px; border:1px solid rgba(111,183,224,.5); background:rgba(111,183,224,.1); color:#8FCBEF; font:700 12px var(--body)}
+.add-bot svg,.set-row .btn svg{width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:2}
+.rm-bot{margin-left:6px; width:28px; height:28px; border-radius:8px; border:1px solid var(--line); background:var(--night); color:var(--muted); font:700 16px/1 var(--body)}
