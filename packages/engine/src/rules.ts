@@ -21,8 +21,6 @@ export interface DankaRules {
   normalCards: number;
   /** §5 Cards per player in the four compulsory Well Cut games. */
   wellCutSequence: number[];
-  /** §14 Length of a round before Placecut. */
-  roundMinutes: number;
   /** Turn timer, used only when the admin switches it on (off by default). On time-out the player packs. */
   turnSeconds: number;
   /** Pause between the end of one game and the start of the next. */
@@ -53,7 +51,6 @@ export const DANKA_RULES: Readonly<DankaRules> = Object.freeze({
   extraBlindActions: 3,
   normalCards: 3,
   wellCutSequence: [4, 3, 2, 1],
-  roundMinutes: 20,
   turnSeconds: 30,
   nextGameSeconds: 8,
   wellCutZone: 1.5,

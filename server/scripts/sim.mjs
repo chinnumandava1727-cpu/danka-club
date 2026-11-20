@@ -2,8 +2,9 @@
 // Start the server with short rounds first:
 //   npx wrangler dev --port 8787 --ip 127.0.0.1 --var AUTH_MODE:dev --var DEV_ROUND_SECONDS:40 --var DEV_NEXT_GAME_SECONDS:1
 // Then: node scripts/sim.mjs
-// Checks: table size, join only at Placecut, card privacy, fairness proof, coin conservation, reconnect to the
-// same seat, a resent bet charged once, Well Cut sequences, bonuses, Placecut scorecard, call off, the ledger report.
+// Checks: table size, join only at a settlement, card privacy, fairness proof, coin conservation, reconnect to the
+// same seat, a resent bet charged once, Well Cut sequences, bonuses, settlement after every game, player loans,
+// the no-two-Blinds-in-a-row rule, call off, the ledger and settlement report.
 import { createHash, randomUUID } from 'node:crypto';
 
 const BASE = process.env.BASE ?? 'http://127.0.0.1:8787';
@@ -27,7 +28,7 @@ async function api(path, opts = {}) {
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-const stats = { games: 0, wellCuts: 0, wcGames: new Set(), bonuses: 0, sideshows: 0, shows: 0, loans: 0, autoSeen: 0, cardSizes: new Set() };
+const stats = { p2pYes: 0, p2pNo: 0, seenBets: 0, games: 0, wellCuts: 0, wcGames: new Set(), bonuses: 0, sideshows: 0, shows: 0, loans: 0, autoSeen: 0, cardSizes: new Set() };
 
 class Bot {
   constructor(i, code) {
@@ -58,6 +59,8 @@ class Bot {
         if (e.e === 'sideshow') stats.sideshows++;
         if (e.e === 'show') stats.shows++;
         if (e.e === 'loan') stats.loans++;
+        if (e.e === 'p2p_answer') stats[e.accepted ? 'p2pYes' : 'p2pNo']++;
+        if (e.e === 'bet' && e.kind === 'seen') stats.seenBets++;
         if (e.e === 'see' && e.auto) stats.autoSeen++;
       }
       if (v.result && v.phase === 'game_over') {
@@ -67,7 +70,7 @@ class Bot {
       }
       if (v.players.length === this.expectSeats) {
         const total = v.players.reduce((a, p) => a + p.coins - p.loan, 0) + v.pot;
-        check(total === this.expectSeats * 100, `coins conserved (${total})`);
+        check(total === this.expectSeats * v.rules.startingCoins, `coins conserved (${total})`);
       }
     }
     this.decide(msg);
@@ -76,6 +79,22 @@ class Bot {
     const v = this.view;
     if (this.paused || v.you < 0) return;
     const o = v.options;
+    // lenders answer requests: accept 60% of the time
+    for (const r of v.incoming ?? []) {
+      if (this.answered?.has(r.id)) continue;
+      (this.answered ??= new Set()).add(r.id);
+      setTimeout(() => this.send({ t: 'p2p_answer', id: r.id, accept: Math.random() < 0.6 }), 30);
+    }
+    // a player who has used all 200 coins asks the richest other player
+    if (o.borrow && !v.myRequest && !this.asking) {
+      const rich = v.players.map((p, j) => [p.coins, j]).filter(([, j]) => j !== v.you).sort((a, b) => b[0] - a[0])[0];
+      if (rich && rich[0] >= 10) { this.asking = true; setTimeout(() => { this.asking = false; this.send({ t: 'p2p_ask', to: rich[1], amount: 10 + Math.floor(Math.random() * 20) }); }, 40); }
+    }
+    // the admin starts each next game after the settlement, unless the test is holding the table
+    if (o.startGame && v.phase === 'placecut' && (!this.hold || !o.tableSize) && this.startedFor !== v.game) {
+      this.startedFor = v.game;
+      return setTimeout(() => this.send({ t: 'start_game' }), 60);
+    }
     if (o.cut) {
       // stop the timing bar: 40% of dealers aim for a middle crossing, the rest stop at a random moment
       const bar = v.cutBar;
@@ -87,18 +106,25 @@ class Bot {
     if (v.phase !== 'betting' || v.turn !== v.you || this.actedSeq >= msg.seq) return;
     this.actedSeq = msg.seq;
     const me = v.players[v.you];
-    const cost = me.seen ? v.rules.seen : v.rules.blind;
+    const cost = me.seen || o.mustSeen ? v.rules.seen : v.rules.blind;
     if (o.loan && o.loan.needed > 0) {
       if (o.loan.needed <= o.loan.left) return this.send({ t: 'loan', id: randomUUID(), amount: o.loan.needed });
+    }
+    if (me.coins < cost) {
+      // wait a moment for a player loan, then pack
+      if (o.borrow && !this.waited) { this.waited = true; this.actedSeq = 0; return setTimeout(() => this.decide({ seq: this.seq }), 400); }
+      this.waited = false;
       return this.send({ t: 'act', id: randomUUID(), action: { type: 'pack' } });
     }
+    this.waited = false;
     const r = Math.random();
     let action;
     if (o.see && r < 0.25) action = { type: 'see' };
     else if (o.sideshow && r < 0.45 && me.coins >= v.rules.sideshow) action = { type: 'sideshow' };
     else if (o.show !== null && r < 0.5) action = { type: 'show' };
     else if (r < 0.12) action = { type: 'pack' };
-    else action = { type: me.seen ? 'seen' : 'blind' };
+    else action = { type: o.blind ? 'blind' : 'seen' };
+    if (o.mustSeen) check(!o.blind, 'a forced player is not offered Blind');
     if (me.coins < cost && action.type !== 'pack') action = { type: 'pack' };
     setTimeout(() => this.send({ t: 'act', id: randomUUID(), action }), 15);
   }
@@ -122,14 +148,15 @@ async function main() {
   bots[0].expectSeats = 6;
   await until(() => bots[0].view?.players.length === 6, 5000, '6 seated');
   check(bots[0].view.isAdmin && bots[0].view.players[0].isDealer, 'first to enter is admin and deals game 1');
-  check(!bots[1].view.options.startRound && bots[0].view.options.startRound, 'only the admin can start the round');
+  check(!bots[1].view.options.startGame && bots[0].view.options.startGame, 'only the admin can start a game');
 
-  bots[0].send({ t: 'start_round' });
-  await until(() => bots[0].view?.round === 1, 5000, 'round 1 starts');
+  bots[0].startedFor = 0;
+  bots[0].send({ t: 'start_game' });
+  await until(() => bots[0].view?.game === 1, 5000, 'game 1 starts');
 
   const late = new Bot(6, code);
   await late.ready; await sleep(400);
-  check(late.lastError === 'round_in_progress', `late joiner waits for Placecut (got ${late.lastError})`);
+  check(late.lastError === 'round_in_progress', `late joiner waits for the settlement (got ${late.lastError})`);
 
   // mid-round: reconnect seat 3, and resend one bet with the same id
   await until(() => bots[0].view?.phase === 'betting', 20_000, 'first betting');
@@ -151,8 +178,11 @@ async function main() {
         const id = randomUUID();
         b.send({ t: 'act', id, action: { type: 'blind' } });
         b.send({ t: 'act', id, action: { type: 'blind' } });
+        b.lastError = null;
         await sleep(400);
-        check(before - b.view.players[b.view.you].coins === 1, `resent Blind charged once (paid ${before - b.view.players[b.view.you].coins})`);
+        // the bot may already have moved before it was paused; then try again on a later turn
+        if (before === b.view.players[b.view.you].coins && b.lastError === 'not_your_turn') { b.paused = false; b.actedSeq = 0; continue; }
+        check(before - b.view.players[b.view.you].coins === 1, `resent Blind charged once (paid ${before - b.view.players[b.view.you].coins}, last error ${b.lastError}, turn ${b.view.turn}/${b.view.you})`);
         b.paused = false; b.actedSeq = 0; b.decide({ seq: b.seq });
         dupDone = true;
       }
@@ -161,16 +191,19 @@ async function main() {
   }
   check(dupDone, 'duplicate-bet check ran');
 
-  // round 1 ends at its clock; Placecut opens with the scorecard
-  await until(() => bots[0].view?.phase === 'placecut', 120_000, 'Placecut after round 1');
+  // after a few games the admin holds the table at a settlement (outside a Well Cut sequence)
+  await until(() => stats.games >= 6, 120_000, '6 games');
+  bots[0].hold = true;
+  await until(() => bots[0].view?.phase === 'placecut' && bots[0].view.options.tableSize, 120_000, 'a settlement where people can join');
   const card = bots[2].view.scorecard;
-  check(card?.round === 1 && card.rows.length >= 2, 'scorecard shown at Placecut');
-  check(card.rows.every((r) => r.net === r.balance - r.initial - r.outstandingLoan), 'net = balance − initial − outstanding loan');
-  console.log(`  round 1: ${card.games} games, pot ${card.totalPot}, well cuts ${card.wellCuts}, loans ${card.loansIssued}`);
+  check(card?.round === bots[2].view.game && card.rows.length >= 2, `settlement shown after game ${card?.round}`);
+  check(card.rows.every((r) => r.net === r.balance - r.initial - r.outstandingLoan - r.owesPlayers + r.owedByPlayers), 'net = balance − initial − bank loan − owed to players + owed by players');
+  check(card.games === bots[2].view.game, 'tournament totals count every game so far');
+  console.log(`  after game ${card.round}: total pot ${card.totalPot}, well cuts ${card.wellCuts}, bank loans ${card.loansIssued}, player loans ${card.loans.length}`);
 
-  // Placecut: the late player joins now, an 8th is refused
+  // at the settlement: the late player joins now, an 8th is refused
   late.open(); await late.ready; await sleep(400);
-  check(late.view?.players.length === 7 && late.view.players[6].coins === 100, 'late player joined at Placecut with 100 coins');
+  check(late.view?.players.length === 7 && late.view.players[6].coins === late.view.rules.startingCoins, 'late player joined at the settlement with 100 coins');
   const eighth = new Bot(7, code);
   await eighth.ready; await sleep(400);
   check(eighth.lastError === 'room_full', `8th player refused (got ${eighth.lastError})`);
@@ -178,10 +211,11 @@ async function main() {
   bots[0].expectSeats = bots[0].view.players.length;
   const carried = bots[0].view.players.map((p) => [p.coins, p.loan]);
 
-  bots[0].send({ t: 'start_round' });
-  await until(() => bots[0].view?.round === 2, 5000, 'round 2 starts');
-  const kept = bots[0].view.players.filter((p) => p.status !== 'eliminated').every((p) => carried.some(([c, l]) => c === p.coins && l === p.loan) || p.coins === 100);
-  check(kept, 'balances and loans carry into round 2');
+  const gameBefore = bots[0].view.game;
+  bots[0].hold = false; bots[0].decide({ seq: bots[0].seq });
+  await until(() => bots[0].view?.game === gameBefore + 1, 5000, 'next game starts');
+  const kept = bots[0].view.players.every((p, i) => i === 6 ? p.coins === bots[0].view.rules.startingCoins : carried[i][0] === p.coins && carried[i][1] === p.loan);
+  check(kept, 'balances and loans carry into the next game');
 
   // admin calls off after a few more games
   const target = stats.games + 4;
@@ -197,9 +231,12 @@ async function main() {
   await until(() => !!bots[0].report, 5000, 'report');
   const ids = bots[0].report.ledger.map((t) => t.id);
   check(ids.length > 20 && new Set(ids).size === ids.length, `ledger has ${ids.length} unique transactions`);
+  const cards = bots[0].report.scorecards;
+  check(cards.length === bots[0].view.game && cards.at(-1).final, `report has a settlement for each of the ${bots[0].view.game} games, the last one final`);
 
   const v = bots[0].view;
   console.log('  standings:', v.players.map((p) => `${p.name} ${p.coins}${p.loan ? ` (loan ${p.loan})` : ''}${p.status === 'eliminated' ? ' OUT' : ''}`).join(', '));
+  console.log(`  Seen bets ${stats.seenBets}, player loans accepted ${stats.p2pYes} / declined ${stats.p2pNo}`);
   console.log(`  games ${stats.games}, card sizes ${[...stats.cardSizes].sort().join('/')}, well cuts ${stats.wellCuts} (games seen ${[...stats.wcGames].sort().join(',') || '-'}), bonuses ${stats.bonuses}, shows ${stats.shows}, sideshows ${stats.sideshows}, loans ${stats.loans}, auto-Seen ${stats.autoSeen}`);
   const errs = bots.flatMap((b) => b.errors).filter((e) => e !== 'round_in_progress' && e !== 'not_admin');
   console.log('  server-rejected moves:', errs.length ? [...new Set(errs)].join(', ') : 'none');

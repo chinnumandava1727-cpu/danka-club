@@ -15,8 +15,14 @@ no Chaal, no Raise, no boot, no extra modes. The values live in `packages/engine
 the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packages/engine/src/hands.ts`.
 
 - 2–10 players. The first to enter is admin and deals game 1; every winner deals the next game (Well Cut games included).
-- 100 coins each. Bank loans up to 100 per player in total, recorded as owed. Lose all 200 and you sit out until Placecut, then leave.
+- 100 coins each. Bank loans up to 100 per player in total, recorded as owed.
+- **Player loans (final lending rule):** once a player has used all 200 coins (their 100 and the full bank loan),
+  they can ask any one player for any amount up to what that player holds. The lender accepts or declines; after a
+  decline they can ask someone else. Accepted coins move at once (existing coins, never new ones) and the borrower
+  owes that lender until the tournament closes. A player with no coins and no loan sits a game out but stays.
 - Blind costs 1, Seen costs 2. Seeing your cards makes you Seen. Pack any time on your turn.
+- **No two Blind players in a row** when 3+ are active: after a Blind bet the next active player must play Seen
+  (a fold doesn't reset it). With only two players left both may play Blind freely, with no three-Blind limit.
 - Show only when two players remain, priced automatically (Blind 1, Seen 2). A Blind player can't Show against another Blind player.
 - When everyone else is Seen, the last Blind player gets 3 more Blind turns, then their cards are shown automatically.
 - Sideshow only when every active player is Seen: with the next active player on your left, costs 2, can't be refused,
@@ -25,7 +31,7 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   the **dealer's left** taps STOP (the dealer only deals); stopping within 1.5% of the middle (the gold line) is a **Well Cut**: four compulsory games of 4, 3, 2 and
   1 cards. The slider is fastest through the middle, changes speed every pass (crypto random) and speeds up, so it
   can't be learned: about 3–5 Well Cuts per 80 games. The server accepts a stop time only from the last 0.25 s before
-  the tap arrived. The round clock never interrupts a Well Cut.
+  the tap arrived.
 - Ranking follows the group's Local Card Rules (`packages/engine/src/hands.ts`):
   3 cards Trail > Pure Sequence > Sequence > Colour > Pair > High; 2 cards Pair (22 highest, then AA) > Pure Sequence >
   Sequence > Colour > High; 4 cards Four of a Kind, otherwise the best 3 of the 4; 1 card highest card.
@@ -33,9 +39,11 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   A Sequence needs every card in a different suit; Colour needs every card in one suit. Ties: sort highest first,
   compare values, then suits card by card (Spades > Hearts > Diamonds > Clubs), so there is never a draw.
 - Bonus N×(N−1), only when the holder wins the game: Three of a Kind in normal 3-card games, Four of a Kind in Well Cut game 1.
-- 20-minute rounds. When the clock runs out, the current game finishes, then **Placecut**: scorecard for everyone,
-  new players may join, anyone may leave, admin starts the next round. Balances and loans carry forward.
-- Admin: start rounds, table size, turn timer on/off (off by default; time out = pack), call off the session,
+- **Tournament:** after every game there is a settlement (scorecard for everyone; join and leave only here, never
+  between the four Well Cut games). The admin presses Start next game. Nothing resets: balances, totals, bonuses,
+  bank and player loans, settlements and the full history carry forward until the admin calls off the tournament
+  (the current game finishes first). There is no round clock.
+- Admin: start each game, table size, turn timer on/off (off by default; time out = pack), call off the session,
   export the settlement PDF. The admin can't see cards, touch the shuffle or edit balances; admin actions are logged.
 - Fairness: crypto shuffle of a fresh deck every game, SHA-256 fingerprint of `deck|salt` published before the cut,
   revealed after the game. Every coin movement is an entry in a permanent ledger (Durable Object SQLite table).
@@ -50,8 +58,9 @@ npm install
 npm test                 # engine unit tests
 npm run build            # build the web game into app/dist
 npm run dev              # local server + game on http://127.0.0.1:8787
-# bots play two short rounds against a local server with 40-second rounds:
-cd server && npx wrangler dev --port 8787 --ip 127.0.0.1 --var AUTH_MODE:dev --var DEV_ROUND_SECONDS:40 --var DEV_NEXT_GAME_SECONDS:1
+# bots play a tournament against a local server:
+cd server && npx wrangler dev --port 8787 --ip 127.0.0.1 --var AUTH_MODE:dev --var DEV_NEXT_GAME_SECONDS:1
+# add --var DEV_STARTING_COINS:8 --var DEV_MAX_LOAN:4 to exercise player loans quickly (dev mode only)
 node server/scripts/sim.mjs   # in another terminal
 ```
 

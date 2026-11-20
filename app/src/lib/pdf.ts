@@ -56,40 +56,44 @@ export async function settlementPdf(r: SessionReport): Promise<Blob> {
   doc.text(`Room ${r.code}  |  Started ${t2(r.createdAt)}  |  Generated ${t2(Date.now())}`, W - M, 52, { align: 'right' });
   y = 86;
   text('Virtual coins only. Coins have no cash value and cannot be bought, sold or withdrawn.', 8, false, [110, 110, 110]);
-  const loans = r.ledger.filter((t) => t.type === 'loan').reduce((a, t) => a + t.amount, 0);
-  text(`Rounds ${r.rounds}   Games ${r.games}   Well Cuts ${r.wellCuts}   Loans issued ${loans}`, 11, true);
+  text(`Games ${r.games}   Total pot ${r.totalPot}   Bonuses ${r.totalBonus}   Well Cuts ${r.wellCuts}   Bank loans ${r.bankLoans}`, 11, true);
   y += 4;
 
   // Final balances
   text('Balances', 13, true, [18, 50, 56]);
   const everyone = [...r.players.map((p) => ({ ...p, left: false })), ...r.departed];
   table(
-    [{ h: 'Player', w: 4 }, { h: 'Balance', w: 2, right: true }, { h: 'Initial', w: 2, right: true }, { h: 'Loan owed', w: 2, right: true },
-      { h: 'Bonus in', w: 2, right: true }, { h: 'Bonus out', w: 2, right: true }, { h: 'Net', w: 2, right: true }, { h: 'Status', w: 3 }],
-    everyone.map((p) => [p.name, p.balance, p.initial, p.outstandingLoan, p.bonusIn, p.bonusOut, sgn(p.net), p.left ? (p.eliminated ? 'Eliminated, left' : 'Left') : p.eliminated ? 'Eliminated' : 'Playing']),
+    [{ h: 'Player', w: 4 }, { h: 'Balance', w: 2, right: true }, { h: 'Initial', w: 2, right: true }, { h: 'Bank owed', w: 2, right: true },
+      { h: 'Owes players', w: 2.4, right: true }, { h: 'Owed to them', w: 2.4, right: true }, { h: 'Net', w: 2, right: true }, { h: 'Status', w: 2.6 }],
+    everyone.map((p) => [p.name, p.balance, p.initial, p.outstandingLoan, p.owesPlayers, p.owedByPlayers, sgn(p.net), p.left ? 'Left' : p.eliminated ? 'No coins' : 'Playing']),
     9,
   );
-  text('Net = balance - initial 100 coins - outstanding loan.', 8, false, [110, 110, 110]);
+  text('Net = balance - 100 starting coins - bank loan - owed to players + owed by players.', 8, false, [110, 110, 110]);
   y += 6;
 
-  // Each round
-  for (const c of r.scorecards) {
-    need(120);
-    text(`Round ${c.round}${c.final ? ' (final)' : ''}  -  ${t2(c.at)}`, 13, true, [18, 50, 56]);
-    text(`Games ${c.games}   Total pot ${c.totalPot}   Bonuses ${c.totalBonus}   Well Cuts ${c.wellCuts}   Loans ${c.loansIssued}`, 9);
-    table(
-      [{ h: 'Player', w: 4 }, { h: 'Start', w: 2, right: true }, { h: 'Received', w: 2, right: true }, { h: 'Paid', w: 2, right: true },
-        { h: 'Won', w: 2, right: true }, { h: 'Lost', w: 2, right: true }, { h: 'Bonus+', w: 2, right: true }, { h: 'Bonus-', w: 2, right: true },
-        { h: 'Balance', w: 2, right: true }, { h: 'Loan', w: 2, right: true }, { h: 'Net', w: 2, right: true }],
-      c.rows.map((p) => [p.name + (p.eliminated ? ' (out)' : p.left ? ' (left)' : ''), p.startBalance, p.received, p.paid, p.winnings, p.losses, p.bonusIn, p.bonusOut, p.balance, p.outstandingLoan, sgn(p.net)]),
-    );
-    if (c.results.length) {
-      table(
-        [{ h: 'Game', w: 1.4 }, { h: 'Time', w: 1.6 }, { h: 'Cards', w: 1.4 }, { h: 'Winner', w: 4 }, { h: 'Pot', w: 1.6, right: true }, { h: 'Bonus', w: 1.6, right: true }, { h: 'How', w: 3 }],
-        c.results.map((g) => [g.game, hm(g.at), g.wellCutGame ? `${g.cardsEach} (WC ${g.wellCutGame}/4)` : g.cardsEach, g.winner, g.pot, g.bonus || '', g.reason === 'show' ? 'Show' : 'Others packed']),
-      );
-    }
-  }
+  // Player-to-player loans
+  text('Player loans (who owes whom)', 13, true, [18, 50, 56]);
+  if (r.loans.length) table([{ h: 'Borrower', w: 4 }, { h: 'Owes', w: 1.4 }, { h: 'Lender', w: 4 }, { h: 'Amount', w: 2, right: true }],
+    r.loans.map((l) => [l.borrowerName, 'owes', l.lenderName, l.amount]), 9);
+  else text('None.', 9);
+  y += 6;
+
+  // Player statistics
+  text('Player statistics (whole tournament)', 13, true, [18, 50, 56]);
+  table(
+    [{ h: 'Player', w: 4 }, { h: 'Games', w: 1.6, right: true }, { h: 'Received', w: 2, right: true }, { h: 'Paid', w: 2, right: true },
+      { h: 'Won', w: 2, right: true }, { h: 'Lost', w: 2, right: true }, { h: 'Bonus+', w: 2, right: true }, { h: 'Bonus-', w: 2, right: true }, { h: 'Bank loans', w: 2.2, right: true }],
+    everyone.map((p) => [p.name, p.games, p.received, p.paid, p.winnings, p.losses, p.bonusIn, p.bonusOut, p.loanTotal]),
+  );
+
+  // Every game
+  const games = r.scorecards.flatMap((c) => c.results);
+  need(80);
+  text(`Game by game (${games.length})`, 13, true, [18, 50, 56]);
+  table(
+    [{ h: 'Game', w: 1.4 }, { h: 'Time', w: 1.6 }, { h: 'Cards', w: 2 }, { h: 'Winner', w: 4 }, { h: 'Pot', w: 1.6, right: true }, { h: 'Bonus', w: 1.6, right: true }, { h: 'How', w: 2.6 }],
+    games.map((g) => [g.game, hm(g.at), g.wellCutGame ? `${g.cardsEach} (WC ${g.wellCutGame}/4)` : g.cardsEach, g.winner, g.pot, g.bonus || '', g.reason === 'show' ? 'Show' : 'Others packed']),
+  );
 
   // Ledger
   doc.addPage(); y = M;
@@ -97,7 +101,7 @@ export async function settlementPdf(r: SessionReport): Promise<Blob> {
   table(
     [{ h: '#', w: 1.2, right: true }, { h: 'Time', w: 1.5 }, { h: 'Rd', w: 0.8, right: true }, { h: 'Game', w: 1, right: true }, { h: 'Player', w: 3 },
       { h: 'Type', w: 2 }, { h: 'Amount', w: 1.6, right: true }, { h: 'Balance', w: 1.6, right: true }, { h: 'Note', w: 6 }],
-    r.ledger.map((t) => [t.id, hm(t.at), t.round, t.game, t.name, t.type.replace('_', ' '), t.amount ? sgn(t.amount) : '', t.balance, t.note ?? '']),
+    r.ledger.map((t) => [t.id, hm(t.at), t.round, t.game, t.name, ({ p2p_in: 'borrowed', p2p_out: 'lent', pot_win: 'pot won', bonus_in: 'bonus in', bonus_out: 'bonus out', eliminated: 'sat out' } as Record<string, string>)[t.type] ?? t.type, t.amount ? sgn(t.amount) : '', t.balance, t.note ?? '']),
     7,
   );
 

@@ -137,7 +137,7 @@ function Home(p: { me: Me; busy: boolean; onCreate: (seats: number) => void; onJ
         <div className="grab" />
         <h3>How many players?</h3>
         <div className="sheet-body">
-          <p className="note" style={{ margin: '0 0 12px' }}>The room holds this many seats. You can change it in the waiting room. Latecomers join at Placecut, between rounds.</p>
+          <p className="note" style={{ margin: '0 0 12px' }}>The room holds this many seats. You can change it in the waiting room. Latecomers join at the settlement after any game.</p>
           <div className="size-grid">
             {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
               <button key={n} className={`size-btn${n === last ? ' on' : ''}`} disabled={p.busy} onClick={() => { setSizeOpen(false); p.onCreate(n); }}>

@@ -5,8 +5,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   DANKA_RULES, GameError, act, activeSeats, callOff, cardCode, commitmentInput, createRoom, cut, deal, dealOrder, deckString,
-  freshDeck, join, leave, nextGame, onDeadline, parseCard, prepareDeck, setTimer, sha256Hex, shuffle, startRound, takeLoan,
-  viewFor, barPosition, cutterSeat, type Card, type State,
+  freshDeck, join, leave, nextGame, onDeadline, parseCard, prepareDeck, setTimer, sha256Hex, shuffle, startGame, takeLoan,
+  viewFor, barPosition, cutterSeat, requestPlayerLoan, answerPlayerLoan, cancelPlayerLoan, type Card, type State,
 } from '../src';
 
 const NAMES = ['Rc', 'Srinu', 'Ravi', 'Kiran', 'Babji', 'Prasad', 'Naidu', 'Suresh', 'Venky', 'Murali'];
@@ -52,9 +52,12 @@ const cutWell = (st: State, u: string | null = cutter(st)) => cut(st, u, st.cutB
 /** The moment in the first pass when the slider is at position p (0 top … 1 bottom). */
 const timeAt = (st: State, p: number) => st.cutBar!.startAt + (Math.acos(1 - 2 * p) / Math.PI) * st.cutBar!.durs[0];
 
+/** Settle the finished game and have the admin start the next one. */
+const next = (st: State) => { nextGame(st, now); startGame(st, uid(0), now); };
+
 /** Start a round and get to betting without a Well Cut. */
 async function toBetting(st: State, want: Record<number, string[]> = {}) {
-  if (st.phase === 'lobby' || st.phase === 'placecut') startRound(st, uid(0), now);
+  if (st.phase === 'lobby' || st.phase === 'placecut') startGame(st, uid(0), now);
   await shuffleIn(st, rig(st, want));
   if (st.phase === 'cutting') cutMiss(st);
   deal(st, st.dealerUid, now);
@@ -63,6 +66,11 @@ async function toBetting(st: State, want: Record<number, string[]> = {}) {
 const a = (st: State, seat: number, type: 'see' | 'blind' | 'seen' | 'pack' | 'show' | 'sideshow') => act(st, uid(seat), { type }, now);
 /** Coins never appear or vanish: balances − loans + pot = players × 100 (plus anyone who left). */
 const conserved = (st: State, n: number) => st.players.reduce((s, p) => s + p.coins - p.loan, 0) + st.pot === n * 100;
+/** Empty a player's purse and bank allowance by moving their coins to another player (coins stay conserved). */
+const broke = (st: State, i: number, to: number) => {
+  const p = st.players[i], add = 100 - p.loan; // takes the rest of the bank loan, then loses everything to `to`
+  st.players[to].coins += p.coins + add; p.coins = 0; p.loan = 100;
+};
 
 describe('rooms (tests 1, 3, 27, 31, 33)', () => {
   it('1. creates a room, joins by code, seats up to 10 and refuses an 11th player', () => {
@@ -73,7 +81,7 @@ describe('rooms (tests 1, 3, 27, 31, 33)', () => {
 
   it('10 players: a Well Cut deals 4 cards each (40 of the 52) round by round', async () => {
     const st = room(10);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st);
     cutWell(st);
     expect(st.players.every((p) => p.cards.length === 4)).toBe(true);
@@ -88,7 +96,7 @@ describe('rooms (tests 1, 3, 27, 31, 33)', () => {
 
   it('3. the first person to enter is admin and deals the first game; the player on the left cuts', async () => {
     const st = room(4);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     expect(st.dealerUid).toBe(uid(0));
     await shuffleIn(st);
     // the player on the dealer's left stops the Well Cut slider; the dealer only deals
@@ -108,15 +116,14 @@ describe('rooms (tests 1, 3, 27, 31, 33)', () => {
     expect(st.players).toHaveLength(3);
   });
 
-  it('27. nobody joins or leaves during a round; both are allowed at Placecut', async () => {
+  it('27. nobody joins or leaves during a game; both are allowed at the settlement after it', async () => {
     const st = room(3);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     expectCode(() => join(st, 'late', 'Late', now), 'round_in_progress');
     expectCode(() => leave(st, uid(1), now), 'round_in_progress');
     await shuffleIn(st);
     cutMiss(st); deal(st, uid(0), now);
     a(st, 1, 'pack'); a(st, 2, 'pack');
-    now = st.roundEndsAt! + 1;
     nextGame(st, now);
     expect(st.phase).toBe('placecut');
     expect(join(st, 'late', 'Late', now).seat).toBe(3);
@@ -137,7 +144,7 @@ describe('rooms (tests 1, 3, 27, 31, 33)', () => {
 describe('dealing and the Well Cut (tests 6–9)', () => {
   it('6. the dealer stops the timing bar; every phone sees the same bar while cutting, the result after', async () => {
     const st = room(7);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st);
     const v = viewFor(st, uid(3));
     expect(v.cutBar).toEqual(st.cutBar);
@@ -153,7 +160,7 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
     const cases: [number, boolean][] = [[0.5, true], [0.514, true], [0.486, true], [0.516, false], [0.484, false], [0.3, false], [0.95, false], [0, false]];
     for (const [p, wc] of cases) {
       const st = room(3);
-      startRound(st, uid(0), now);
+      startGame(st, uid(0), now);
       await shuffleIn(st);
       cut(st, cutter(st), timeAt(st, p), now);
       expect(st.lastCut!.wellCut, `stopped at ${p}`).toBe(wc);
@@ -161,7 +168,7 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
     }
     // the middle of the third pass (bottom → top) is a Well Cut too
     const st = room(2);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st);
     const d = st.cutBar!.durs;
     cut(st, cutter(st), st.cutBar!.startAt + d[0] + d[1] + d[2] / 2, now);
@@ -170,7 +177,7 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
 
   it('7b. the slider changes speed every pass, speeds up, and eases fastest through the middle', async () => {
     const st = room(2);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st);
     const bar = st.cutBar!;
     expect(new Set(bar.durs.slice(0, 10)).size).toBeGreaterThan(5);
@@ -184,7 +191,7 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
 
   it('7c. random stops land in the Well Cut zone rarely (about 2%)', async () => {
     const st = room(2);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st);
     let hits = 0;
     const N = 20000;
@@ -195,13 +202,13 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
 
   it('8. a Well Cut starts four compulsory games of 4, 3, 2 and 1 cards; the winner deals each; then normal play resumes', async () => {
     const st = room(3);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st);
     cutWell(st);
     const sizes: number[] = [];
     const dealers: string[] = [];
     for (let g = 0; g < 4; g++) {
-      if (g > 0) { nextGame(st, now); await shuffleIn(st); }
+      if (g > 0) { next(st); await shuffleIn(st); }
       expect(st.phase).toBe('dealing'); // no cut inside the sequence
       sizes.push(st.cardsEach);
       expect(st.players.every((p) => p.cards.length === st.cardsEach)).toBe(true);
@@ -212,27 +219,30 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
       expect(st.dealerUid).toBe(st.players[st.result!.winner].uid);
     }
     expect(sizes).toEqual([4, 3, 2, 1]);
-    nextGame(st, now);
+    next(st);
     await shuffleIn(st);
     expect(st.phase).toBe('cutting');
     expect(st.cardsEach).toBe(3);
   });
 
-  it('8b. the round clock cannot interrupt a Well Cut sequence', async () => {
+  it('8b. nobody joins or leaves between the four Well Cut games; the admin still starts each one', async () => {
     const st = room(2);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st);
     cutWell(st); deal(st, uid(0), now);
     a(st, st.turn, 'pack');
-    now = st.roundEndsAt! + 60_000;
     nextGame(st, now);
-    expect(st.phase).toBe('shuffling'); // Well Cut game 2 still happens
-    expect(st.cardsEach).toBe(3);
+    expect(st.phase).toBe('placecut');
+    expectCode(() => join(st, 'late', 'Late', now), 'well_cut_in_progress');
+    expectCode(() => leave(st, uid(1), now), 'well_cut_in_progress');
+    expect(viewFor(st, uid(1)).options.leave).toBe(false);
+    startGame(st, uid(0), now);
+    expect(st.cardsEach).toBe(3); // Well Cut game 2
   });
 
   it('9. cards are dealt one at a time, round by round, from the dealer’s left', async () => {
     const st = room(4);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     const deck = shuffle(freshDeck());
     await shuffleIn(st, deck);
     cutMiss(st);
@@ -247,7 +257,7 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
     await toBetting(st);
     a(st, 1, 'pack'); a(st, 2, 'pack');
     expect(st.dealerUid).toBe(uid(0));
-    nextGame(st, now);
+    next(st);
     await shuffleIn(st);
     cutMiss(st); deal(st, uid(0), now);
     a(st, 1, 'pack'); a(st, 2, 'blind'); a(st, 0, 'pack');
@@ -318,6 +328,42 @@ describe('Blind, Seen and Show (tests 14–17)', () => {
   });
 });
 
+describe('no two consecutive Blind players when three or more are active', () => {
+  it('a Blind player forces the next active player to play Seen', async () => {
+    const st = room(4);
+    await toBetting(st);
+    a(st, 1, 'blind');
+    expect(viewFor(st, uid(2)).options).toMatchObject({ blind: false, seen: true, mustSeen: true });
+    expectCode(() => a(st, 2, 'blind'), 'must_play_seen');
+    a(st, 2, 'seen'); // looks at the cards and pays 2
+    expect(st.players[2].seen).toBe(true);
+    expect(st.ledger.at(-1)!.amount).toBe(-2);
+    // after a Seen bet the next player may choose
+    expect(viewFor(st, uid(3)).options).toMatchObject({ blind: true, mustSeen: false });
+    a(st, 3, 'blind');
+    expect(viewFor(st, uid(0)).options.mustSeen).toBe(true);
+  });
+
+  it('if the forced player folds, the next active player must play Seen; folded players are skipped', async () => {
+    const st = room(4);
+    await toBetting(st);
+    a(st, 1, 'blind');
+    a(st, 2, 'pack');
+    expect(st.turn).toBe(3);
+    expect(viewFor(st, uid(3)).options.mustSeen).toBe(true);
+    expectCode(() => a(st, 3, 'blind'), 'must_play_seen');
+  });
+
+  it('with only two players left the restriction and the three-Blind limit are removed', async () => {
+    const st = room(3);
+    await toBetting(st);
+    a(st, 1, 'pack');
+    for (let k = 0; k < 12; k++) a(st, st.turn, 'blind');
+    expect(st.players[0].seen || st.players[2].seen).toBe(false);
+    expect(st.phase).toBe('betting');
+  });
+});
+
 describe('Sideshow (tests 18–20)', () => {
   it('18. opens only when every active player is Seen', async () => {
     const st = room(4);
@@ -370,7 +416,7 @@ describe('bonuses (tests 21, 22, 32)', () => {
 
   it('22. Four of a Kind in Well Cut game 1 pays the same bonus', async () => {
     const st = room(3);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st, rig(st, { 2: ['9s', '9h', '9d', '9c'] }, 4));
     cutWell(st);
     deal(st, uid(0), now);
@@ -380,11 +426,11 @@ describe('bonuses (tests 21, 22, 32)', () => {
 
   it('Three of a Kind also pays in Well Cut game 2 (the 3-card game) when the holder wins', async () => {
     const st = room(3);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st);
     cutWell(st); deal(st, uid(0), now);
     a(st, 1, 'pack'); a(st, 2, 'pack'); // seat 0 wins game 1 and deals game 2
-    nextGame(st, now);
+    next(st);
     expect(st.cardsEach).toBe(3);
     await shuffleIn(st, rig(st, { 2: ['Ks', 'Kh', 'Kd'] }, 3));
     deal(st, uid(0), now);
@@ -395,11 +441,11 @@ describe('bonuses (tests 21, 22, 32)', () => {
 
   it('no bonus in the 2-card and 1-card games', async () => {
     const st = room(2);
-    startRound(st, uid(0), now);
+    startGame(st, uid(0), now);
     await shuffleIn(st);
     cutWell(st); deal(st, uid(0), now); a(st, st.turn, 'pack');
     for (let g = 2; g <= 4; g++) {
-      nextGame(st, now); await shuffleIn(st); deal(st, st.dealerUid, now); a(st, st.turn, 'pack');
+      next(st); await shuffleIn(st); deal(st, st.dealerUid, now); a(st, st.turn, 'pack');
       expect(st.result!.bonus).toBeNull();
     }
   });
@@ -426,88 +472,125 @@ describe('bank, loans and elimination (tests 24, 25)', () => {
     a(st, 1, 'blind');
   });
 
-  it('25. a player who has lost all 200 coins is folded until Placecut and must leave then', async () => {
+  it('a player who has used all 200 coins can ask another player for any amount; the lender accepts', async () => {
     const st = room(3);
     await toBetting(st);
-    st.players[0].coins += st.players[1].coins; st.players[1].coins = 0; st.players[1].loan = 100; st.players[0].loan += 100;
-    a(st, 1, 'pack'); // not reached: seat 1 is turn now but cannot continue
-    expect(st.players[1].status).not.toBe('in');
+    broke(st, 1, 0);
+    expectCode(() => a(st, 1, 'blind'), 'need_player_loan');
+    expect(viewFor(st, uid(1)).options.borrow).toBe(true);
+    expect(viewFor(st, uid(2)).options.borrow).toBe(false);
+    expectCode(() => requestPlayerLoan(st, uid(2), 0, 10, now), 'not_eligible');
+    expectCode(() => requestPlayerLoan(st, uid(1), 2, 101, now), 'lender_short'); // Ravi has only 100
+    requestPlayerLoan(st, uid(1), 2, 40, now);
+    expect(viewFor(st, uid(2)).incoming).toEqual([{ id: 1, from: 1, amount: 40 }]);
+    expectCode(() => answerPlayerLoan(st, uid(0), 1, true, now), 'not_lender');
+    answerPlayerLoan(st, uid(2), 1, true, now);
+    expect(st.players[1].coins).toBe(40);
+    expect(st.players[2].coins).toBe(60);
+    expect(viewFor(st, uid(0)).p2p).toMatchObject([{ borrowerName: 'Srinu', lenderName: 'Ravi', amount: 40 }]);
+    expect(st.ledger.slice(-2).map((t) => [t.type, t.amount])).toEqual([['p2p_out', -40], ['p2p_in', 40]]);
+    expect(conserved(st, 3)).toBe(true); // existing coins moved; none created
+    a(st, 1, 'blind');
   });
 
-  it('25b. elimination happens automatically on their turn and they sit out the rest of the round', async () => {
+  it('after a decline the borrower can ask someone else; a request can be cancelled', async () => {
+    const st = room(4);
+    await toBetting(st);
+    broke(st, 1, 0);
+    requestPlayerLoan(st, uid(1), 2, 30, now);
+    expectCode(() => requestPlayerLoan(st, uid(1), 3, 30, now), 'request_open');
+    const ev = answerPlayerLoan(st, uid(2), 1, false, now);
+    expect(ev[0]).toMatchObject({ e: 'p2p_answer', accepted: false });
+    expect(st.players[1].coins).toBe(0);
+    requestPlayerLoan(st, uid(1), 3, 30, now);
+    cancelPlayerLoan(st, uid(1));
+    expect(st.requests).toEqual([]);
+    requestPlayerLoan(st, uid(1), 0, 50, now);
+    answerPlayerLoan(st, uid(0), 3, true, now);
+    expect(st.players[1].coins).toBe(50);
+  });
+
+  it('player loans carry forward, count in the net, and add up per lender', async () => {
     const st = room(3);
-    startRound(st, uid(0), now);
-    st.players[0].coins += st.players[1].coins; st.players[1].coins = 0; st.players[1].loan = 100; st.players[0].loan += 100;
-    await shuffleIn(st);
-    cutMiss(st); // 5 cards / 2 active players: not a Well Cut
-    deal(st, uid(0), now);
-    expect(st.players[1].status).toBe('eliminated');
-    expect(st.turn).toBe(2);
-    a(st, 2, 'pack');
+    await toBetting(st);
+    broke(st, 2, 0);
+    requestPlayerLoan(st, uid(2), 0, 20, now); answerPlayerLoan(st, uid(0), 1, true, now);
+    st.players[2].coins = 0; st.players[0].coins += 20; // spent it
+    requestPlayerLoan(st, uid(2), 0, 15, now); answerPlayerLoan(st, uid(0), 2, true, now);
+    expect(st.p2p).toHaveLength(1);
+    expect(st.p2p[0].amount).toBe(35);
+    a(st, 1, 'pack'); a(st, 2, 'pack');
     nextGame(st, now);
-    expect(st.players[1].status).toBe('eliminated');
-    now = st.roundEndsAt! + 1;
-    await shuffleIn(st); cutMiss(st); deal(st, st.dealerUid, now); a(st, st.turn, 'pack');
+    const rows = viewFor(st, uid(0)).scorecard!.rows;
+    const ravi = rows.find((r) => r.name === 'Ravi')!, rc = rows.find((r) => r.name === 'Rc')!;
+    expect(ravi.owesPlayers).toBe(35);
+    expect(ravi.net).toBe(ravi.balance - 100 - 100 - 35);
+    expect(rc.owedByPlayers).toBe(35);
+    expect(rc.net).toBe(rc.balance - 100 - rc.outstandingLoan + 35);
+    startGame(st, uid(0), now);
+    expect(st.p2p[0].amount).toBe(35);
+  });
+
+  it('a player with no coins and no bank loan left sits a game out but stays at the table', async () => {
+    const st = room(3);
+    await toBetting(st);
+    a(st, 1, 'pack'); a(st, 2, 'pack');
     nextGame(st, now);
-    expect(st.phase).toBe('placecut');
-    startRound(st, uid(0), now);
-    expect(st.players.map((p) => p.name)).toEqual(['Rc', 'Ravi']); // Srinu left after settlement
+    broke(st, 2, 0);
+    startGame(st, uid(0), now);
+    expect(st.players[2].status).toBe('eliminated');
+    expect(st.dealt).not.toContain(2);
+    expect(st.players).toHaveLength(3);
+    // borrows during the game, plays the next one
+    requestPlayerLoan(st, uid(2), 1, 25, now); answerPlayerLoan(st, uid(1), 1, true, now);
+    await shuffleIn(st); cutMiss(st); deal(st, st.dealerUid, now);
+    a(st, st.turn, 'pack');
+    nextGame(st, now); startGame(st, uid(0), now);
+    expect(st.players[2].status).toBe('in');
   });
 });
 
 describe('rounds, Placecut and settlement (tests 26, 28, 29)', () => {
-  it('an eliminated admin stays as host: still starts rounds, never plays or deals', async () => {
+  it('26. after every game there is a settlement; the admin starts the next game; there is no round clock', async () => {
     const st = room(3);
-    startRound(st, uid(0), now);
-    st.players[1].coins += st.players[0].coins; st.players[0].coins = 0; st.players[0].loan = 100; st.players[1].loan += 100;
-    st.dealerUid = uid(0);
-    now = st.roundEndsAt! + 1;
-    await shuffleIn(st); cutMiss(st); deal(st, uid(0), now);
-    a(st, 1, 'pack'); a(st, 2, 'blind'); // the admin's turn: out of coins and loan → eliminated
-    expect(st.players[0].status).toBe('eliminated');
-    expect(st.phase).toBe('game_over');
+    await toBetting(st);
+    now += 60 * 60_000;
+    a(st, 1, 'blind'); a(st, 2, 'pack'); a(st, 0, 'pack');
+    expect(st.deadline?.kind).toBe('next_game');
     nextGame(st, now);
     expect(st.phase).toBe('placecut');
-    startRound(st, uid(0), now);
-    expect(st.players).toHaveLength(3);
-    expect(st.players[0].status).toBe('eliminated');
-    expect(st.dealerUid).not.toBe(uid(0));
-    expect(activeSeats(st)).toEqual([1, 2]);
+    expect(viewFor(st, uid(1)).options.startGame).toBe(false);
+    expectCode(() => startGame(st, uid(1), now), 'not_admin');
+    startGame(st, uid(0), now);
+    expect(st.game).toBe(2);
   });
 
-  it('26. a round lasts 20 minutes; the game in progress finishes; then Placecut', async () => {
-    const st = room(3);
-    startRound(st, uid(0), now);
-    expect(st.roundEndsAt).toBe(now + 20 * 60_000);
-    await shuffleIn(st); cutMiss(st); deal(st, uid(0), now);
-    now += 21 * 60_000;
-    a(st, 1, 'blind'); // the game continues past zero
-    a(st, 2, 'pack'); a(st, 0, 'pack');
-    nextGame(st, now);
-    expect(st.phase).toBe('placecut');
-  });
-
-  it('28/29. the scorecard shows every figure, and balances and loans carry into the next round', async () => {
+  it('28/29. the settlement shows every figure; nothing resets when the next game starts', async () => {
     const st = room(3);
     takeLoan(st, uid(2), 30, now);
     await toBetting(st);
-    a(st, 1, 'blind'); a(st, 2, 'blind'); a(st, 0, 'pack'); a(st, 1, 'pack');
-    now = st.roundEndsAt! + 1;
+    a(st, 1, 'blind'); a(st, 2, 'seen'); a(st, 0, 'pack'); a(st, 1, 'pack');
     nextGame(st, now);
-    const card = viewFor(st, uid(1)).scorecard!;
+    let card = viewFor(st, uid(1)).scorecard!;
     expect(card.round).toBe(1);
-    expect(card.games).toBe(1);
     const ravi = card.rows.find((r) => r.name === 'Ravi')!;
-    expect(ravi).toMatchObject({ initial: 100, loanTotal: 30, outstandingLoan: 30, winnings: 2, startBalance: 130 });
+    expect(ravi).toMatchObject({ initial: 100, loanTotal: 30, outstandingLoan: 30, winnings: 3, startBalance: 130, change: 1 });
     expect(ravi.net).toBe(ravi.balance - 100 - 30);
-    const raviCoins = st.players[2].coins;
-    startRound(st, uid(0), now);
-    expect(st.players[2].coins).toBe(raviCoins);
-    expect(st.players[2].loan).toBe(30);
+    startGame(st, uid(0), now);
+    await shuffleIn(st); cutMiss(st); deal(st, st.dealerUid, now);
+    for (let g = 0; g < 3 && st.phase === 'betting'; g++) a(st, st.turn, 'pack');
+    nextGame(st, now);
+    card = viewFor(st, uid(1)).scorecard!;
+    expect(card.round).toBe(2);
+    expect(card.games).toBe(2);
+    const ravi2 = card.rows.find((r) => r.name === 'Ravi')!;
+    expect(ravi2.winnings).toBeGreaterThanOrEqual(3); // tournament totals carry forward
+    expect(ravi2.games).toBe(2);
+    expect(st.cardOutbox.length).toBe(2);
     expect(conserved(st, 3)).toBe(true);
   });
 
-  it('the admin can call off the session; the current game finishes first', async () => {
+  it('only the admin can call off the tournament; the current game finishes first', async () => {
     const st = room(3);
     await toBetting(st);
     callOff(st, uid(0), now);
@@ -534,7 +617,7 @@ describe('timer switch and games with 2–7 players (tests 2, 32)', () => {
   it('2. full random games with 2 to 10 players never create or lose coins', async () => {
     for (let n = 2; n <= 10; n++) {
       const st = room(n);
-      startRound(st, uid(0), now);
+      startGame(st, uid(0), now);
       for (let g = 0; g < 25; g++) {
         await shuffleIn(st);
         if (st.phase === 'cutting') cut(st, cutter(st), st.cutBar!.startAt + Math.random() * 8000, now);
@@ -545,17 +628,28 @@ describe('timer switch and games with 2–7 players (tests 2, 32)', () => {
           const need = v.options.loan?.needed ?? 0;
           if (need > 0 && need <= v.options.loan!.left) takeLoan(st, uid(i), need, now);
           const p = st.players[i];
-          if (p.coins < (p.seen ? 2 : 1)) { a(st, i, 'pack'); continue; }
+          if (v.options.borrow && p.coins < 2) {
+            // borrow from the richest other player, who accepts half the time
+            const rich = st.players.map((q, j) => [q.coins, j]).filter(([, j]) => j !== i).sort((x, y) => y[0] - x[0])[0];
+            if (rich[0] >= 5) {
+              const ev = requestPlayerLoan(st, uid(i), rich[1], 5, now);
+              const id = (ev[0] as { id: number }).id;
+              answerPlayerLoan(st, uid(rich[1]), id, Math.random() < 0.5, now);
+            }
+          }
+          if (p.coins < (p.seen || v.options.mustSeen ? 2 : 1)) { a(st, i, 'pack'); continue; }
           if (v.options.see && r < 0.3) a(st, i, 'see');
           else if (v.options.show !== null && r < 0.6) a(st, i, 'show');
           else if (v.options.sideshow && r < 0.5) a(st, i, 'sideshow');
           else if (r < 0.15) a(st, i, 'pack');
-          else a(st, i, st.players[i].seen ? 'seen' : 'blind');
+          else a(st, i, v.options.blind ? 'blind' : 'seen');
         }
         expect(st.phase, `n=${n} game ${g}`).toBe('game_over');
         expect(conserved(st, n), `n=${n} game ${g}`).toBe(true);
         nextGame(st, now);
-        if (st.phase !== 'shuffling') break;
+        expect(st.phase).toBe('placecut');
+        if (!viewFor(st, uid(0)).options.startGame) break;
+        startGame(st, uid(0), now);
       }
     }
   });

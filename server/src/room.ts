@@ -1,8 +1,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-  type GameEvent, type State, type Tx, DANKA_RULES, GameError, act, callOff, commitmentInput, createRoom, cut, deal,
+  type GameEvent, type Scorecard, type State, type Tx, DANKA_RULES, GameError, act, answerPlayerLoan, callOff, cancelPlayerLoan, commitmentInput, createRoom, cut, deal,
   deckString, freshDeck, join, leave, needsDeck, onDeadline, prepareDeck, randomHex, seatOf, sessionReport, setConnected, setTableSize,
-  setTimer, sha256Hex, shuffle, startRound, takeLoan, viewFor,
+  requestPlayerLoan, setTimer, sha256Hex, shuffle, startGame, takeLoan, viewFor,
 } from '@danka/engine';
 import { ROOM_TTL_MS } from './codes';
 import { CLOSE, THROWABLES, type ClientMsg, type ServerMsg } from './protocol';
@@ -54,9 +54,11 @@ export class Room extends DurableObject<Env> {
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ledger (
       id INTEGER PRIMARY KEY, at INTEGER, round INTEGER, game INTEGER, uid TEXT, name TEXT,
       type TEXT, amount INTEGER, balance INTEGER, note TEXT)`);
+    // Every settlement of the tournament, kept for the final report.
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS settlements (game INTEGER PRIMARY KEY, final INTEGER, json TEXT)');
     ctx.blockConcurrencyWhile(async () => {
       const saved = await ctx.storage.get<Saved>('room');
-      this.s = saved && saved.game?.v === 2 ? saved : null;
+      this.s = saved && saved.game?.v === 3 ? saved : null;
     });
   }
 
@@ -75,8 +77,9 @@ export class Room extends DurableObject<Env> {
     const now = Date.now();
     const rules = { ...DANKA_RULES, wellCutSequence: [...DANKA_RULES.wellCutSequence] };
     if (this.env.AUTH_MODE === 'dev') {
-      if (Number(this.env.DEV_ROUND_SECONDS) > 0) rules.roundMinutes = Number(this.env.DEV_ROUND_SECONDS) / 60;
       if (Number(this.env.DEV_NEXT_GAME_SECONDS) > 0) rules.nextGameSeconds = Number(this.env.DEV_NEXT_GAME_SECONDS);
+      if (Number(this.env.DEV_STARTING_COINS) > 0) rules.startingCoins = Number(this.env.DEV_STARTING_COINS);
+      if (Number(this.env.DEV_MAX_LOAN) >= 0 && this.env.DEV_MAX_LOAN !== undefined) rules.maxLoan = Number(this.env.DEV_MAX_LOAN);
     }
     const game = createRoom({
       rules,
@@ -98,10 +101,11 @@ export class Room extends DurableObject<Env> {
       exists: true,
       phase: g.phase,
       round: g.round,
+      game: g.game,
       seats: g.players.length,
       tableSize: g.tableSize,
       full: g.players.length >= g.tableSize,
-      joinable: g.phase === 'lobby' || g.phase === 'placecut',
+      joinable: g.phase === 'lobby' || (g.phase === 'placecut' && !g.wellCut.active),
       closed: g.phase === 'ended',
       expired: this.expired(),
       players: g.players.map((p) => p.name),
@@ -186,8 +190,14 @@ export class Room extends DurableObject<Env> {
           if (msg.id) this.send(ws, { t: 'ack', id: msg.id });
           return;
         }
-        case 'start_round':
-          return this.commit(startRound(g, me.uid, now));
+        case 'start_game':
+          return this.commit(startGame(g, me.uid, now));
+        case 'p2p_ask':
+          return this.commit(requestPlayerLoan(g, me.uid, Number(msg.to), Number(msg.amount), now));
+        case 'p2p_answer':
+          return this.commit(answerPlayerLoan(g, me.uid, Number(msg.id), !!msg.accept, now));
+        case 'p2p_cancel':
+          return this.commit(cancelPlayerLoan(g, me.uid));
         case 'call_off':
           return this.commit(callOff(g, me.uid, now));
         case 'timer':
@@ -207,7 +217,8 @@ export class Room extends DurableObject<Env> {
         case 'report': {
           if (me.uid !== g.adminUid) return this.send(ws, { t: 'error', code: 'not_admin', message: 'Only the admin can export the settlement report.' });
           const ledger = this.ctx.storage.sql.exec('SELECT * FROM ledger ORDER BY id').toArray() as unknown as Tx[];
-          return this.send(ws, { t: 'report', report: { ...sessionReport(g), ledger, code: this.s.code } });
+          const scorecards = this.ctx.storage.sql.exec('SELECT json FROM settlements ORDER BY game').toArray().map((r) => JSON.parse(String(r.json)) as Scorecard);
+          return this.send(ws, { t: 'report', report: { ...sessionReport(g), scorecards, ledger, code: this.s.code } });
         }
         default:
           return this.send(ws, { t: 'error', code: 'bad_message', message: 'Unknown message.' });
@@ -294,6 +305,10 @@ export class Room extends DurableObject<Env> {
       );
     }
     g.outbox = [];
+    for (const c of g.cardOutbox ?? []) {
+      this.ctx.storage.sql.exec('INSERT OR REPLACE INTO settlements (game, final, json) VALUES (?, ?, ?)', c.round, c.final ? 1 : 0, JSON.stringify(c));
+    }
+    g.cardOutbox = [];
   }
 
   private async scheduleAlarm(): Promise<void> {

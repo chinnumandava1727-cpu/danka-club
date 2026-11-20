@@ -58,7 +58,7 @@ function useTicker(ms: number, on = true) {
   useEffect(() => { if (!on) return; const t = setInterval(() => force((x) => x + 1), ms); return () => clearInterval(t); }, [ms, on]);
 }
 
-type Sheet = null | 'ledger' | 'result' | 'leave' | 'admin' | 'loan';
+type Sheet = null | 'ledger' | 'result' | 'leave' | 'admin' | 'loan' | 'lend';
 type Banner = { title: string; sub: string; kind: 'wellcut' | 'bonus' | 'round' } | null;
 /** The timing bar's result, held on screen for a moment after the dealer stops it. */
 type Frozen = { pos: number; off: number; wellCut: boolean; zone: number; auto: boolean } | null;
@@ -109,7 +109,7 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
           .finally(() => setExporting(false));
       } else if (m.t === 'error' && viewRef.current) {
         play('error'); buzz(HAP.error); toast(m.message);
-        if (m.code === 'need_loan') setSheet('loan');
+        if (m.code === 'need_loan' || m.code === 'need_player_loan') setSheet('loan');
       }
     };
     const c = new RoomClient(code, tokenFor(me), onMsg, (s, detail) => {
@@ -159,7 +159,7 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
       switch (e.e) {
         case 'joined': if (!e.rejoined && e.seat !== you) { play('knock'); buzz(HAP.land); toast(`${e.name} joined the table`); } break;
         case 'left': toast(`${e.name} left the table`); break;
-        case 'round': play('gong'); buzz(HAP.rise); showBanner({ kind: 'round', title: `Round ${e.round}`, sub: `${Math.max(1, Math.round((e.endsAt - Date.now()) / 60000))} minute${Math.round((e.endsAt - Date.now()) / 60000) > 1 ? 's' : ''} on the clock` }, 2200); break;
+        case 'start': play('gong'); buzz(HAP.rise); showBanner({ kind: 'round', title: `Game ${e.game}`, sub: v.wellCut.active ? `Well Cut game ${v.wellCut.game} of 4` : 'Shuffling a fresh deck' }, 1800); break;
         case 'game': if (e.wellCutGame && e.wellCutGame > 1) { play('chime'); showBanner({ kind: 'wellcut', title: `Well Cut · game ${e.wellCutGame} of 4`, sub: `${e.cardsEach} card${e.cardsEach === 1 ? '' : 's'} each` }, 2200); } break;
         case 'commit': shuffleDeck(); play('shuffle'); break;
         case 'cut': {
@@ -252,7 +252,18 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
           break;
         }
         case 'loan': if (e.seat === you) { play('clink', 3); toast(`Bank loan: +${e.amount} coins`); } else bubble(e.seat, `Bank +${e.amount}`); break;
-        case 'eliminated': play('lose'); toast(e.seat === you ? 'You have lost 200 coins: you are out until Placecut' : `${name(e.seat)} has lost 200 coins and is out until Placecut`); break;
+        case 'sitout': if (e.seat === you) { play('lose'); toast('No coins left: you sit this game out. Borrow from a player to come back in.'); } break;
+        case 'p2p_request':
+          if (e.to === you) { play('knock'); buzz(HAP.turn); setSheet('lend'); }
+          else if (e.from === you) toast(`Asked ${name(e.to)} for ${e.amount} coins. Waiting for an answer…`);
+          break;
+        case 'p2p_answer':
+          if (e.from === you) {
+            if (e.accepted) { play('clink', 4); buzz(HAP.win); toast(`${name(e.to)} lent you ${e.amount} coins`); setSheet((s) => (s === 'loan' ? null : s)); }
+            else { play('error'); buzz(HAP.error); toast(`${name(e.to)} declined. You can ask someone else.`); }
+          } else if (e.accepted && e.to !== you) bubble(e.from, `Loan +${e.amount}`);
+          break;
+        case 'p2p_cancel': if (e.to === you) setSheet((s) => (s === 'lend' ? null : s)); break;
         case 'placecut': play('gong'); buzz(HAP.rise); setSheet(null); break;
         case 'ended': play('fanfare'); setSheet(null); break;
         case 'timer': toast(`The admin switched the turn timer ${e.on ? 'on' : 'off'}`); break;
@@ -271,6 +282,9 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
   // offer the bank automatically when it is your turn and you are short
   const needed = view?.options.loan?.needed ?? 0;
   useEffect(() => { if (needed > 0) setSheet((s) => (s === null ? 'loan' : s)); }, [needed]);
+  // a loan request waiting for my answer
+  const incoming = view?.incoming.length ?? 0;
+  useEffect(() => { if (incoming > 0) setSheet((s) => (s === null || s === 'result' ? 'lend' : s)); }, [incoming]);
 
   /* ---------- turn timer ring (only when the admin has switched the timer on) ---------- */
   useEffect(() => {
@@ -321,14 +335,16 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
   const exportPdf = () => { if (exporting) return; setExporting(true); play('tap'); send.send({ t: 'report' }); setTimeout(() => setExporting(false), 15000); };
   const adminSheet = (
     <>
-      <div className={`scrim${sheet === 'admin' ? ' on' : ''}`} onClick={() => setSheet(null)} />
+      <div className={`scrim${sheet === 'admin' || sheet === 'lend' || (sheet === 'loan' && view.phase !== 'betting') ? ' on' : ''}`} onClick={() => setSheet(null)} />
       <AdminSheet open={sheet === 'admin'} view={view} client={send} exporting={exporting} onExport={exportPdf} onClose={() => setSheet(null)} />
+      <LendSheet open={sheet === 'lend'} view={view} client={send} onClose={() => setSheet(null)} />
+      {(view.phase === 'placecut' || view.phase === 'lobby') && <LoanSheet open={sheet === 'loan'} view={view} client={send} onClose={() => setSheet(null)} />}
     </>
   );
 
   if (view.phase === 'lobby') return <><Lobby view={view} code={code} client={send} toast={toast} onExit={onExit} onSettings={onSettings} onAdmin={() => setSheet('admin')} />{adminSheet}{offlineBanner}</>;
   if (view.phase === 'placecut' || view.phase === 'ended') {
-    return <><Placecut view={view} code={code} client={send} toast={toast} exporting={exporting} onExport={exportPdf} onExit={onExit} onSettings={onSettings} onAdmin={() => setSheet('admin')} />{adminSheet}{offlineBanner}</>;
+    return <><Placecut view={view} code={code} client={send} toast={toast} exporting={exporting} onExport={exportPdf} onExit={onExit} onSettings={onSettings} onAdmin={() => setSheet('admin')} onBorrow={() => setSheet('loan')} />{adminSheet}{offlineBanner}</>;
   }
 
   return (
@@ -363,7 +379,7 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
         <div className="grab" />
         <h3>Step away?</h3>
         <div className="confirm-body">
-          <p>Your seat stays yours: open the room again with the same code to come back. Players can only leave the room for good at Placecut, when the round ends.
+          <p>Your seat stays yours: open the room again with the same code to come back. Players can only leave the room for good at a settlement, after a game.
             {view.timerOn ? ' The turn timer is on, so you pack if your turn times out.' : ' The table waits for you on your turn.'}</p>
           <div className="row2"><button className="btn line" onClick={() => setSheet(null)}>Stay</button><button className="btn gold" onClick={() => onExit()}>Step away</button></div>
         </div>
@@ -417,10 +433,10 @@ function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin }: { vie
           );
         })}
       </div>
-      <p className="rule-note">Everyone starts with {view.rules.startingCoins} coins. The admin deals game 1, then each winner deals. Rounds run {20} minutes; new players join at Placecut between rounds.</p>
+      <p className="rule-note">Everyone starts with {view.rules.startingCoins} coins. The admin deals game 1, then each winner deals. After every game there is a settlement; new players can join then, and the admin starts the next game.</p>
       <div className="lobby-actions" style={{ gridTemplateColumns: '1fr' }}>
         {isAdmin
-          ? <button className="btn gold" disabled={!view.options.startRound} onClick={() => { client.send({ t: 'start_round' }); buzz(HAP.click); }}>{n < view.minPlayers ? `Waiting for players (${n}/${view.minPlayers})` : `Start round 1 with ${n}`}</button>
+          ? <button className="btn gold" disabled={!view.options.startGame} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>{n < view.minPlayers ? `Waiting for players (${n}/${view.minPlayers})` : `Start game 1 with ${n}`}</button>
           : <button className="btn gold" disabled>{me ? 'Waiting for the admin to start' : 'Joining…'}</button>}
       </div>
     </section>
@@ -447,72 +463,92 @@ function InviteCard({ code, toast }: { code: string; toast: ToastFn }) {
 
 /* ================= PLACECUT / SETTLEMENT ================= */
 
-function Placecut({ view, code, client, toast, exporting, onExport, onExit, onSettings, onAdmin }: {
-  view: PlayerView; code: string; client: RoomClient; toast: ToastFn; exporting: boolean; onExport: () => void; onExit: (m?: string) => void; onSettings: () => void; onAdmin: () => void;
+function Placecut({ view, code, client, toast, exporting, onExport, onExit, onSettings, onAdmin, onBorrow }: {
+  view: PlayerView; code: string; client: RoomClient; toast: ToastFn; exporting: boolean; onExport: () => void; onExit: (m?: string) => void; onSettings: () => void; onAdmin: () => void; onBorrow: () => void;
 }) {
   const ended = view.phase === 'ended';
   const card = view.scorecard;
   const me = view.players[view.you];
   const rows = card ? [...card.rows].sort((a, b) => b.net - a.net) : [];
   const [open, setOpen] = useState<string | null>(null);
+  const g = card?.results[0];
+  const wcNext = !ended && view.wellCut.active;
   return (
-    <section className="screen" id="lobby" aria-label={ended ? 'Final settlement' : 'Placecut'}>
+    <section className="screen" id="lobby" aria-label={ended ? 'Final settlement' : 'Settlement'}>
       <div className="bar">
         <button className="icon-btn" aria-label="Home" onClick={() => onExit()}><Icon name="home" /></button>
-        <h2>{ended ? 'Final settlement' : `Placecut · round ${view.round}`}</h2>
+        <h2>{ended ? 'Final settlement' : `Settlement · game ${view.game}`}</h2>
         {view.isAdmin && !ended && <button className="icon-btn" style={{ marginLeft: 'auto' }} aria-label="Admin controls" onClick={() => { play('tap'); onAdmin(); }}><Icon name="crown" /></button>}
         <button className="icon-btn" style={view.isAdmin && !ended ? undefined : { marginLeft: 'auto' }} aria-label="Settings" onClick={onSettings}><Icon name="sliders" /></button>
       </div>
+      {g && (
+        <div className="last-game">
+          <b>{g.winner} won {fmt(g.pot)}{g.bonus ? ` + bonus ${fmt(g.bonus)}` : ''}</b>
+          <span>Game {g.game} · {g.wellCutGame ? `Well Cut ${g.wellCutGame}/4 · ` : ''}{g.cardsEach} card{g.cardsEach === 1 ? '' : 's'} · {g.reason === 'show' ? 'won at Show' : 'everyone else packed'}</span>
+        </div>
+      )}
       {card && (
         <div className="pc-stats">
           <div><small>Games</small><b className="num">{card.games}</b></div>
           <div><small>Total pot</small><b className="num">{fmt(card.totalPot)}</b></div>
           <div><small>Well Cuts</small><b className="num">{card.wellCuts}</b></div>
           <div><small>Bonuses</small><b className="num">{fmt(card.totalBonus)}</b></div>
-          <div><small>Loans</small><b className="num">{fmt(card.loansIssued)}</b></div>
+          <div><small>Bank loans</small><b className="num">{fmt(card.loansIssued)}</b></div>
         </div>
       )}
       <div className="seat-list scorecard" aria-label="Scorecard">
         {rows.map((r) => (
           <button key={r.name} className={`score-row${open === r.name ? ' open' : ''}${r.eliminated ? ' out' : ''}`} onClick={() => { play('tap'); setOpen(open === r.name ? null : r.name); }}>
             <span className="sr-top">
-              <span className="who"><b>{r.name}{me && r.name === me.name ? ' (you)' : ''}</b><small>{r.eliminated ? 'Eliminated · leaves after settlement' : `${r.games} game${r.games === 1 ? '' : 's'} · balance ${fmt(r.balance)}${r.outstandingLoan ? ` · loan ${fmt(r.outstandingLoan)}` : ''}`}</small></span>
+              <span className="who"><b>{r.name}{me && r.name === me.name ? ' (you)' : ''}{r.left ? ' (left)' : ''}</b>
+                <small>Balance {fmt(r.balance)}{r.change ? <> · <span className={r.change > 0 ? 'up' : 'down'}>{sgn(r.change)} this game</span></> : ''}{r.outstandingLoan ? ` · bank ${fmt(r.outstandingLoan)}` : ''}{r.owesPlayers ? ` · owes ${fmt(r.owesPlayers)}` : ''}{r.owedByPlayers ? ` · owed ${fmt(r.owedByPlayers)}` : ''}{r.eliminated ? ' · no coins' : ''}</small></span>
               <span className={`net num ${r.net >= 0 ? 'up' : 'down'}`}>{sgn(r.net)}</span>
             </span>
             {open === r.name && (
               <span className="sr-grid num">
-                <span>Start <b>{fmt(r.startBalance)}</b></span><span>Received <b>{fmt(r.received)}</b></span><span>Paid <b>{fmt(r.paid)}</b></span>
+                <span>Games <b>{fmt(r.games)}</b></span><span>Received <b>{fmt(r.received)}</b></span><span>Paid <b>{fmt(r.paid)}</b></span>
                 <span>Winnings <b>{fmt(r.winnings)}</b></span><span>Losses <b>{fmt(r.losses)}</b></span><span>Balance <b>{fmt(r.balance)}</b></span>
-                <span>Initial <b>{fmt(r.initial)}</b></span><span>Loans <b>{fmt(r.loanTotal)}</b></span><span>Owed <b>{fmt(r.outstandingLoan)}</b></span>
-                <span>Bonus in <b>{fmt(r.bonusIn)}</b></span><span>Bonus out <b>{fmt(r.bonusOut)}</b></span><span>Net <b>{sgn(r.net)}</b></span>
+                <span>Initial <b>{fmt(r.initial)}</b></span><span>Bank loans <b>{fmt(r.loanTotal)}</b></span><span>Bank owed <b>{fmt(r.outstandingLoan)}</b></span>
+                <span>Owes players <b>{fmt(r.owesPlayers)}</b></span><span>Owed by players <b>{fmt(r.owedByPlayers)}</b></span><span>Net <b>{sgn(r.net)}</b></span>
+                <span>Bonus in <b>{fmt(r.bonusIn)}</b></span><span>Bonus out <b>{fmt(r.bonusOut)}</b></span><span>This game <b>{sgn(r.change)}</b></span>
               </span>
             )}
           </button>
         ))}
-        {card && card.results.length > 0 && (
+        {view.p2p.length > 0 && (
+          <div className="games-list p2p-list">
+            <b>Player loans</b>
+            {view.p2p.map((l) => <div key={l.borrower + l.lender} className="ledger-item"><span><b>{l.borrowerName}</b> owes <b>{l.lenderName}</b></span><span className="lbal num">{fmt(l.amount)}</span></div>)}
+          </div>
+        )}
+        {view.history.length > 0 && (
           <details className="games-list">
-            <summary>Game by game ({card.results.length})</summary>
-            {card.results.map((g) => (
-              <div key={g.game} className="ledger-item"><time>#{g.game}</time>
-                <span>{g.winner} won {fmt(g.pot)}{g.bonus ? ` + bonus ${g.bonus}` : ''} · {g.wellCutGame ? `Well Cut ${g.wellCutGame}/4 · ` : ''}{g.cardsEach} cards · {g.reason === 'show' ? 'Show' : 'others packed'}</span></div>
+            <summary>Game by game ({view.history.length > 29 ? 'latest 30' : view.history.length})</summary>
+            {[...view.history].reverse().map((h) => (
+              <div key={h.game} className="ledger-item"><time>#{h.game}</time>
+                <span>{h.winner} won {fmt(h.pot)}{h.bonus ? ` + bonus ${h.bonus}` : ''} · {h.wellCutGame ? `Well Cut ${h.wellCutGame}/4 · ` : ''}{h.cardsEach} cards · {h.reason === 'show' ? 'Show' : 'others packed'}</span></div>
             ))}
           </details>
         )}
       </div>
-      <p className="rule-note">{ended ? 'The session is over. Net = balance − 100 starting coins − loan owed. Coins have no cash value.'
-        : 'Balances and loans carry into the next round. New players can join now, and anyone can leave.'}</p>
-      {!ended && <InviteCard code={code} toast={toast} />}
+      <p className="rule-note">{ended ? 'The tournament is over. Net = balance − 100 starting coins − bank loan − owed to players + owed by players. Coins have no cash value.'
+        : wcNext ? `Well Cut game ${view.wellCut.game} of 4 is next. Nobody joins or leaves until the four Well Cut games are done.`
+        : 'Nothing resets: balances, loans and totals carry into the next game. New players can join now, and anyone can leave.'}</p>
+      {!ended && !wcNext && <InviteCard code={code} toast={toast} />}
+      {!ended && view.options.borrow && (
+        <button className="btn line borrow-cta" onClick={() => { play('tap'); onBorrow(); }}><Icon name="bank" />{view.myRequest ? `Waiting for ${view.players[view.myRequest.to]?.name}…` : 'Borrow from a player'}</button>
+      )}
       <div className="lobby-actions" style={{ gridTemplateColumns: view.isAdmin ? '1fr 1.4fr' : '1fr' }}>
         {view.isAdmin
           ? <>
             <button className="btn line" disabled={exporting} onClick={onExport}><Icon name="file" />{exporting ? 'Making PDF…' : 'Export PDF'}</button>
             {ended
               ? <button className="btn gold" onClick={() => onExit()}>Back to home</button>
-              : <button className="btn gold" disabled={!view.options.startRound} onClick={() => { client.send({ t: 'start_round' }); buzz(HAP.click); }}>Start round {view.round + 1}</button>}
+              : <button className="btn gold" disabled={!view.options.startGame} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>Start game {view.game + 1}</button>}
           </>
           : ended
             ? <button className="btn gold" onClick={() => onExit()}>Back to home</button>
-            : <button className="btn line" disabled={!view.options.leave} onClick={() => { client.send({ t: 'leave' }); }}>Leave the room</button>}
+            : <button className="btn line" disabled={!view.options.leave} onClick={() => { client.send({ t: 'leave' }); }}>{wcNext ? 'Leave after the Well Cut' : 'Leave the room'}</button>}
       </div>
     </section>
   );
@@ -593,8 +629,6 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
     client.act({ type });
   };
 
-  const left = view.roundEndsAt ? view.roundEndsAt - now : 0;
-  const clock = view.wellCut.active && left <= 0 ? 'Well Cut finishing' : left > 0 ? mmss(left) : 'Last game';
   const dl = view.deadline && view.deadline.kind !== 'next_game' ? Math.max(0, Math.ceil((view.deadline.at - now) / 1000)) : null;
   const dealerName = view.players[view.dealer]?.name ?? '';
   const cutterName = view.players[view.cutter]?.name ?? '';
@@ -609,9 +643,11 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
     : view.phase === 'dealing' ? (o.deal ? `Tap the deck to deal ${view.cardsEach} card${view.cardsEach === 1 ? '' : 's'} each${dl !== null ? ` · ${dl}` : ''}.` : `${dealerName} is dealing`)
     : view.phase === 'betting' ? (
       !me ? ''
-      : me.status === 'eliminated' ? 'You have lost 200 coins: you sit out until Placecut.'
+      : me.status === 'eliminated' ? (view.options.borrow ? 'No coins left: you sit this game out. Borrow from a player to play the next one.' : 'You sit this game out.')
       : me.status === 'packed' ? 'You packed. Watching the rest of the game.'
       : view.turn === you ? (loanNeed > 0 ? `You need ${loanNeed} more coin${loanNeed === 1 ? '' : 's'}. Borrow from the bank or pack.`
+        : view.options.borrow && me.coins < (me.seen || o.mustSeen ? view.rules.seen : view.rules.blind) ? (view.myRequest ? `Waiting for ${view.players[view.myRequest.to]?.name} to answer your loan request…` : 'Your bank loan is used up. Borrow from a player, or pack.')
+        : o.mustSeen ? `${view.players[view.lastBlind ?? -1]?.name ?? 'The player before you'} played Blind, so you must play Seen (${view.rules.seen} coins) or pack.`
         : `Your turn · ${me.seen ? `Seen: ${view.rules.seen} coins` : `Blind: ${view.rules.blind} coin`}${xb !== null && xb !== undefined && !me.seen ? ` · ${xb} Blind turn${xb === 1 ? '' : 's'} left, then your cards are shown` : ''}`)
       : turnP?.connected === false ? `${turnP.name} is offline. ${view.timerOn ? 'They pack if the timer runs out.' : 'The admin can switch on the turn timer.'}`
       : `${turnP?.name ?? ''} is thinking…`)
@@ -623,7 +659,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
       <div className="topbar">
         <button className="icon-btn" aria-label="Step away" onClick={() => { play('tap'); onSheet('leave'); }}><Icon name="home" /></button>
         <span className="room-chip">{code}</span>
-        <span className="hand-no num"><span className={`clock${left > 0 && left < 120_000 ? ' low' : ''}`}><Icon name="clock" />{clock}</span> R{view.round} · G{view.roundGames}</span>
+        <span className="hand-no num">Game {view.game}{view.wellCut.active ? ` · WC ${view.wellCut.game}/4` : ''}</span>
         <span className={`signal ${quality.q}`} role="img" aria-label={quality.q === 'offline' ? 'Offline' : `Connection ${quality.q}, ${Math.round(quality.rtt)} ms`} title={quality.q === 'offline' ? 'Offline' : `${Math.round(quality.rtt)} ms`}><i /><i /><i /></span>
         <button className="icon-btn" aria-label="Ledger" onClick={() => { play('tap'); onSheet('ledger'); }}><Icon name="ledger" /></button>
         {view.isAdmin
@@ -695,10 +731,10 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
         <div className={`abtns${dealing ? ' locked' : ''}`}>
           <button className="ab pack" disabled={!o.pack || busy} onClick={() => bet('pack')}>Pack<small>fold</small></button>
           {me && !me.seen && <button className="ab see" disabled={!o.see} onClick={() => bet('see')}>See<small>cards</small></button>}
-          {loanNeed > 0
-            ? <button className="ab chaal" onClick={() => { play('tap'); onSheet('loan'); }}><span>Borrow</span><small>need {loanNeed}</small></button>
-            : <button className="ab chaal" disabled={!(o.blind || o.seen) || busy} onClick={() => bet(me?.seen ? 'seen' : 'blind')}>
-              <span>{me?.seen ? 'Seen' : 'Blind'}</span><small className="num">{me?.seen ? view.rules.seen : view.rules.blind} coin{me?.seen ? 's' : ''}</small></button>}
+          {loanNeed > 0 || (view.turn === you && view.options.borrow && (me?.coins ?? 0) < (me?.seen || o.mustSeen ? view.rules.seen : view.rules.blind))
+            ? <button className="ab chaal" onClick={() => { play('tap'); onSheet('loan'); }}><span>Borrow</span><small>{loanNeed > 0 ? `need ${loanNeed}` : 'from a player'}</small></button>
+            : <button className={`ab chaal${o.mustSeen ? ' must' : ''}`} disabled={!(o.blind || o.seen) || busy} onClick={() => bet(o.blind ? 'blind' : 'seen')}>
+              <span>{o.blind ? 'Blind' : 'Seen'}</span><small className="num">{o.mustSeen ? `must · ${view.rules.seen} coins` : o.blind ? `${view.rules.blind} coin` : `${view.rules.seen} coins`}</small></button>}
           {o.sideshow && <button className="ab raise" disabled={busy} onClick={() => bet('sideshow')}>Sideshow<small className="num">{o.sideshow.cost} · {sideTarget}</small></button>}
           {o.show !== null && <button className="ab show" disabled={busy} onClick={() => bet('show')}>Show<small className="num">{o.show}</small></button>}
         </div>
@@ -709,7 +745,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
 }
 
 function Tag({ s }: { s: PlayerView['players'][number] }) {
-  if (s.status === 'eliminated') return <span className="tag out">Out</span>;
+  if (s.status === 'eliminated') return <span className="tag out">Sitting out</span>;
   if (s.status === 'packed') return <span className="tag packed">Packed</span>;
   if (s.seen) return <span className="tag seen"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>Seen</span>;
   return (
@@ -889,7 +925,7 @@ function ResultSheet({ open, view, client, verify, onVerify }: { open: boolean; 
   const lh = r.show ? (r.winner === r.show.a ? r.show.bHand : r.show.aHand) : null;
   const sub = r.show && wh && lh ? `Show: ${wh.name} beats ${lh.name}` : 'Everyone else packed';
   const kind = r.wellCutGame ? `Well Cut game ${r.wellCutGame} of 4 · ${r.cardsEach} card${r.cardsEach === 1 ? '' : 's'}` : `${r.cardsEach}-card game`;
-  const timeUp = view.roundEndsAt !== null && client.serverNow() >= view.roundEndsAt && !(r.wellCutGame && r.wellCutGame < 4);
+
   return (
     <div className={`sheet${open ? ' on' : ''}`} id="result" role="dialog" aria-label="Game result">
       <div className="grab" />
@@ -911,7 +947,7 @@ function ResultSheet({ open, view, client, verify, onVerify }: { open: boolean; 
       </div>
       <div className="res-btns">
         <button className="btn line" onClick={onVerify}>Verify fairness</button>
-        <button className="btn gold" disabled>{view.callOff ? 'Session ending…' : timeUp ? `Placecut in ${left}` : `Next game in ${left}`}</button>
+        <button className="btn gold" disabled>{view.callOff ? 'Tournament ending…' : `Settlement in ${left}`}</button>
       </div>
     </div>
   );
@@ -924,16 +960,54 @@ function LoanSheet({ open, view, client, onClose }: { open: boolean; view: Playe
   const min = Math.max(1, o?.needed ?? 1);
   const max = o?.left ?? 0;
   const [amt, setAmt] = useState(min);
+  const [lender, setLender] = useState<number | null>(null);
+  const [ask, setAsk] = useState(20);
   useEffect(() => { if (open) setAmt(Math.min(max, Math.max(min, 10))); }, [open, min, max]);
   if (!me) return null;
+  const others = view.players.map((p, i) => ({ ...p, i })).filter((p) => p.i !== view.you && p.coins > 0).sort((a, b) => b.coins - a.coins);
+  const chosen = lender !== null ? view.players[lender] : null;
+  const req = view.myRequest;
   return (
-    <div className={`sheet${open ? ' on' : ''}`} role="dialog" aria-label="Bank loan">
+    <div className={`sheet${open ? ' on' : ''}`} role="dialog" aria-label="Loans">
       <div className="grab" />
-      <h3>Bank loan <span className="fine">Up to {view.rules.maxLoan} per player</span></h3>
+      <h3>{view.options.borrow ? 'Borrow from a player' : 'Bank loan'} <span className="fine">{view.options.borrow ? 'Existing coins, never new ones' : `Up to ${view.rules.maxLoan} per player`}</span></h3>
       <div className="sheet-body">
-        {!o ? <p className="note">{me.loan >= view.rules.maxLoan ? `You have borrowed the full ${view.rules.maxLoan} coins.` : 'Loans are not available right now.'}</p> : (
+        {view.options.borrow ? (
+          req ? (
+            <>
+              <p className="note" style={{ marginTop: 0 }}>You asked <b style={{ color: 'var(--ivory)' }}>{view.players[req.to]?.name}</b> for <b style={{ color: 'var(--marigold)' }}>{req.amount} coins</b>. Waiting for their answer…</p>
+              <div className="row2"><button className="btn line" onClick={onClose}>Close</button>
+                <button className="btn line" style={{ color: '#FF9A9D' }} onClick={() => { client.send({ t: 'p2p_cancel' }); buzz(HAP.tick); }}>Cancel request</button></div>
+            </>
+          ) : (
+            <>
+              <p className="note" style={{ marginTop: 0 }}>You have used all 200 coins (your 100 and the full bank loan). Ask one player for any amount up to what they hold. If they agree the coins move at once, and you owe that amount to them until the tournament ends.</p>
+              <div className="lender-list">
+                {others.map((p) => (
+                  <button key={p.i} className={`lender${lender === p.i ? ' on' : ''}`} onClick={() => { setLender(p.i); setAsk((a) => Math.min(a, p.coins)); play('tap'); }}>
+                    <span className="lav" style={{ background: colorOf(p.i) }}>{ini(p.name)}</span><b>{p.name}</b><span className="num">{fmt(p.coins)}</span>
+                  </button>
+                ))}
+                {!others.length && <p className="note">Nobody has coins to lend right now.</p>}
+              </div>
+              {chosen && (
+                <>
+                  <div className="loan-amt num"><b>{ask}</b><small>coins from {chosen.name}</small></div>
+                  <input className="loan-range" type="range" min={1} max={Math.max(1, chosen.coins)} value={Math.min(ask, chosen.coins)} aria-label="Amount to ask for" onChange={(e) => { setAsk(Number(e.target.value)); play('tick'); buzz(HAP.peek); }} />
+                  <div className="test-row" style={{ justifyContent: 'center', margin: '10px 0 14px' }}>
+                    {[10, 20, 50, 100].filter((x) => x <= chosen.coins).map((x) => <button key={x} onClick={() => { setAsk(x); play('tick'); }}>{x}</button>)}
+                  </div>
+                </>
+              )}
+              <div className="row2">
+                <button className="btn line" onClick={onClose}>Not now</button>
+                <button className="btn gold" disabled={!chosen || ask < 1 || ask > (chosen?.coins ?? 0)} onClick={() => { client.send({ t: 'p2p_ask', to: lender!, amount: ask }); buzz(HAP.click); }}>{chosen ? `Ask ${chosen.name}` : 'Choose a player'}</button>
+              </div>
+            </>
+          )
+        ) : !o ? <p className="note">{me.loan >= view.rules.maxLoan ? `You have borrowed the full ${view.rules.maxLoan} coins from the bank. When you run out, you can borrow from a player.` : 'Loans are not available right now.'}</p> : (
           <>
-            <p className="note" style={{ marginTop: 0 }}>{o.needed > 0 ? `You need ${o.needed} more coin${o.needed === 1 ? '' : 's'} for this turn.` : 'Borrow coins from the bank. The loan is recorded and stays owed until settlement.'}
+            <p className="note" style={{ marginTop: 0 }}>{o.needed > 0 ? `You need ${o.needed} more coin${o.needed === 1 ? '' : 's'} for this turn.` : 'Borrow coins from the bank. The loan is recorded and stays owed until the tournament ends.'}
               {' '}You owe {fmt(me.loan)} now; {fmt(max)} more is available.</p>
             <div className="loan-amt num"><b>{amt}</b><small>coins</small></div>
             <input className="loan-range" type="range" min={min} max={max} value={amt} aria-label="Loan amount" onChange={(e) => { setAmt(Number(e.target.value)); play('tick'); buzz(HAP.peek); }} />
@@ -948,6 +1022,33 @@ function LoanSheet({ open, view, client, onClose }: { open: boolean; view: Playe
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- a loan request for me to answer ---------- */
+function LendSheet({ open, view, client, onClose }: { open: boolean; view: PlayerView; client: RoomClient; onClose: () => void }) {
+  const r = view.incoming[0];
+  const me = view.players[view.you];
+  useEffect(() => { if (open && !r) onClose(); }, [open, r, onClose]);
+  if (!r || !me) return <div className="sheet" />;
+  const who = view.players[r.from];
+  const enough = me.coins >= r.amount;
+  return (
+    <div className={`sheet${open ? ' on' : ''}`} role="dialog" aria-label="Loan request">
+      <div className="grab" />
+      <h3>Loan request</h3>
+      <div className="confirm-body">
+        <div className="res-top" style={{ margin: '0 0 12px' }}>
+          <div className="lav" style={{ background: colorOf(r.from) }}>{ini(who?.name ?? '')}</div>
+          <div><b>{who?.name} asks to borrow {r.amount} coins</b><span>You have {fmt(me.coins)}. {who?.name} will owe you {r.amount} until the tournament ends.</span></div>
+        </div>
+        {!enough && <p className="note" style={{ color: '#FF9A9D' }}>You don't have {r.amount} coins available right now.</p>}
+        <div className="row2">
+          <button className="btn line" onClick={() => { client.send({ t: 'p2p_answer', id: r.id, accept: false }); buzz(HAP.tick); onClose(); }}>Decline</button>
+          <button className="btn gold" disabled={!enough} onClick={() => { client.send({ t: 'p2p_answer', id: r.id, accept: true }); play('clink', 4); buzz(HAP.click); onClose(); }}>Lend {r.amount}</button>
+        </div>
       </div>
     </div>
   );

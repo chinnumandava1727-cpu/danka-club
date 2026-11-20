@@ -6,7 +6,7 @@ export type Throwable = (typeof THROWABLES)[number];
 
 /** Messages a phone sends to its room. */
 export type ClientMsg =
-  | { t: 'start_round' }
+  | { t: 'start_game' }
   | { t: 'call_off' }
   | { t: 'timer'; on: boolean }
   | { t: 'size'; size: number }
@@ -16,6 +16,10 @@ export type ClientMsg =
   /** `id` is a client-made unique id so a resend after a dropout is never applied twice. */
   | { t: 'act'; id: string; action: Action }
   | { t: 'loan'; id: string; amount: number }
+  /** Final lending rule: ask another player (by seat) for a loan, answer one, or cancel your own. */
+  | { t: 'p2p_ask'; to: number; amount: number }
+  | { t: 'p2p_answer'; id: number; accept: boolean }
+  | { t: 'p2p_cancel' }
   | { t: 'leave' }
   | { t: 'report' }
   | { t: 'react'; to: number; kind: Throwable }
