@@ -76,7 +76,13 @@ class Bot {
     const v = this.view;
     if (this.paused || v.you < 0) return;
     const o = v.options;
-    if (o.cut) return setTimeout(() => this.send({ t: 'cut', at: Math.random() }), 20);
+    if (o.cut) {
+      // stop the timing bar: 40% of dealers aim for a middle crossing, the rest stop at a random moment
+      const bar = v.cutBar;
+      let at = bar.startAt + Math.random() * 3000;
+      if (Math.random() < 0.4) { let t = bar.startAt; const k = Math.floor(Math.random() * 4); for (let i = 0; i < k; i++) t += bar.durs[i]; at = t + bar.durs[k] / 2; }
+      return setTimeout(() => this.send({ t: 'cut', at }), Math.max(20, at - Date.now() + 5));
+    }
     if (o.deal) return setTimeout(() => this.send({ t: 'deal' }), 20);
     if (v.phase !== 'betting' || v.turn !== v.you || this.actedSeq >= msg.seq) return;
     this.actedSeq = msg.seq;

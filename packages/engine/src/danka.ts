@@ -8,7 +8,7 @@
  *
  * Rule references (§) are to "DANKA CLUB – Complete Game Rules, Regulations & Developer Specification".
  */
-import { type Card, cardCode, deckString } from './cards';
+import { type Card, cardCode, cryptoRandInt, deckString } from './cards';
 import { type HandValue, compareHands, evaluate } from './hands';
 import { type DankaRules, MAX_SEATS } from './rules';
 
@@ -147,9 +147,19 @@ export interface Scorecard {
 }
 
 export interface CutInfo {
-  count: number;
+  /** Where the slider stopped: 0 = top of the bar, 0.5 = middle, 1 = bottom. */
+  pos: number;
+  /** Distance from the middle, in percent of the bar. */
+  off: number;
   players: number;
   wellCut: boolean;
+}
+
+/** §5 The Well Cut timing bar: when the slider starts and how long each pass takes. */
+export interface CutBar {
+  startAt: number;
+  durs: number[];
+  zone: number;
 }
 
 export interface Deadline {
@@ -163,7 +173,7 @@ export type GameEvent =
   | { e: 'round'; round: number; endsAt: number }
   | { e: 'game'; game: number; cardsEach: number; wellCutGame: number | null }
   | { e: 'commit'; hash: string }
-  | { e: 'cut'; count: number; players: number; wellCut: boolean; auto: boolean }
+  | { e: 'cut'; pos: number; off: number; players: number; wellCut: boolean; auto: boolean }
   | { e: 'deal'; dealer: number; order: number[]; cardsEach: number; auto: boolean }
   | { e: 'turn'; seat: number }
   | { e: 'see'; seat: number; auto: boolean }
@@ -207,6 +217,7 @@ export interface State {
   wellCutsThisRound: number;
   loansThisRound: number;
   lastCut: CutInfo | null;
+  cutBar: CutBar | null;
   commit: string | null;
   /** Server-only: the current deck and salt. Never sent to phones before the game ends. */
   secret: { deck: string; salt: string; cards: Card[] } | null;
@@ -291,7 +302,7 @@ export function createRoom(opts: { rules: DankaRules; admin: { uid: string; name
     tableSize: Math.max(r.minPlayers, Math.min(r.maxPlayers, MAX_SEATS, Math.round(opts.tableSize ?? r.maxPlayers))),
     players: [], departed: [], phase: 'lobby', round: 0, roundEndsAt: null, callOff: false, timerOn: false,
     game: 0, roundGames: 0, dealerUid: opts.admin.uid, turn: -1, pot: 0, cardsEach: r.normalCards, dealt: [],
-    wellCut: { active: false, index: 0 }, wellCutCount: 0, wellCutsThisRound: 0, loansThisRound: 0, lastCut: null,
+    wellCut: { active: false, index: 0 }, wellCutCount: 0, wellCutsThisRound: 0, loansThisRound: 0, lastCut: null, cutBar: null,
     commit: null, secret: null, result: null, deadline: null, history: [], scorecards: [], ledger: [], outbox: [], txSeq: 0,
   };
   join(st, opts.admin.uid, opts.admin.name, opts.now);
@@ -357,7 +368,7 @@ export function setTimer(st: State, uid: string, on: boolean, now: number): Game
   if (st.deadline?.kind !== 'next_game') st.deadline = null;
   if (on) {
     if (st.phase === 'betting') st.deadline = { kind: 'turn', at: now + st.rules.turnSeconds * 1000 };
-    if (st.phase === 'cutting') st.deadline = { kind: 'cut', at: now + st.rules.turnSeconds * 1000 };
+    if (st.phase === 'cutting') st.deadline = { kind: 'cut', at: Math.max(now, st.cutBar?.startAt ?? now) + st.rules.turnSeconds * 1000 };
     if (st.phase === 'dealing') st.deadline = { kind: 'deal', at: now + st.rules.turnSeconds * 1000 };
   }
   return [{ e: 'timer', on }];
@@ -432,6 +443,7 @@ function beginGame(st: State, now: number): GameEvent[] {
   st.commit = null;
   st.secret = null;
   st.lastCut = null;
+  st.cutBar = null;
   st.dealt = activeSeats(st);
   st.cardsEach = st.wellCut.active ? st.rules.wellCutSequence[st.wellCut.index] : st.rules.normalCards;
   st.phase = 'shuffling';
@@ -459,9 +471,38 @@ export function prepareDeck(st: State, deck: Card[], salt: string, commit: strin
     if (st.timerOn) st.deadline = { kind: 'deal', at: now + st.rules.turnSeconds * 1000 };
   } else {
     st.phase = 'cutting';
-    if (st.timerOn) st.deadline = { kind: 'cut', at: now + st.rules.turnSeconds * 1000 };
+    st.cutBar = makeCutBar(st.rules, now);
+    if (st.timerOn) st.deadline = { kind: 'cut', at: st.cutBar.startAt + st.rules.turnSeconds * 1000 };
   }
   return [{ e: 'commit', hash: commit }];
+}
+
+const BAR_PASSES = 300;
+
+/** A fresh slider: random speed for every pass (crypto randomness), quicker each pass down to a floor. */
+export function makeCutBar(rules: DankaRules, now: number): CutBar {
+  const durs: number[] = [];
+  let d = rules.cutBarPassMs;
+  for (let i = 0; i < BAR_PASSES; i++) {
+    const j = (cryptoRandInt(2001) - 1000) / 1000; // −1..1
+    durs.push(Math.round(d * (1 + j * rules.cutBarJitter)));
+    d = Math.max(rules.cutBarPassMs * rules.cutBarFloor, d * rules.cutBarAccel);
+  }
+  return { startAt: now + rules.cutBarLeadMs, durs, zone: rules.wellCutZone };
+}
+
+/**
+ * Where the slider is at a moment in time (0 top … 1 bottom). It eases like a pendulum:
+ * slow at the ends, fastest through the middle. The same function runs on the server and every phone.
+ */
+export function barPosition(bar: CutBar, at: number): number {
+  let t = Math.max(0, at - bar.startAt);
+  const total = bar.durs.reduce((a, b) => a + b, 0);
+  if (t >= total) t %= total;
+  let i = 0;
+  while (t > bar.durs[i]) { t -= bar.durs[i]; i++; }
+  const e = 0.5 - 0.5 * Math.cos((Math.PI * t) / bar.durs[i]);
+  return i % 2 ? 1 - e : e;
 }
 
 /** Clockwise from the dealer's left, skipping folded/eliminated players. */
@@ -482,18 +523,19 @@ function lockCards(st: State) {
 }
 
 /**
- * §4/§5 The dealer picked a bunch of cards without knowing how many. `count` is how many they
- * picked (the server works it out from the dealer's gesture plus luck). If it divides exactly by
- * the active player count, it is a Well Cut and the four-game sequence starts with this game.
- * Pass uid null for the automatic cut (timer on).
+ * §5 The dealer stopped the timing bar at server time `at` (the server checks it against when the tap
+ * arrived). Within `wellCutZone`% of the middle it is a Well Cut, and the four-game sequence starts
+ * with this game. Pass uid null for the automatic stop (timer on).
  */
-export function cut(st: State, uid: string | null, count: number, now: number): GameEvent[] {
+export function cut(st: State, uid: string | null, at: number, now: number): GameEvent[] {
   if (st.phase !== 'cutting') fail('not_cutting', 'There is nothing to cut right now.');
-  if (uid !== null && uid !== st.dealerUid) fail('not_dealer', 'Only the dealer picks the cards.');
-  const c = Math.max(1, Math.min(51, Math.round(count)));
+  if (uid !== null && uid !== st.dealerUid) fail('not_dealer', 'Only the dealer cuts.');
+  const bar = st.cutBar ?? makeCutBar(st.rules, now);
+  const pos = barPosition(bar, at);
+  const off = Math.round(Math.abs(pos - 0.5) * 10000) / 100;
   const players = activeSeats(st).length;
-  const wellCut = c % players === 0;
-  st.lastCut = { count: c, players, wellCut };
+  const wellCut = off <= bar.zone;
+  st.lastCut = { pos, off, players, wellCut };
   if (wellCut) {
     st.wellCut = { active: true, index: 0 };
     st.wellCutCount += 1;
@@ -503,7 +545,7 @@ export function cut(st: State, uid: string | null, count: number, now: number): 
   lockCards(st);
   st.phase = 'dealing';
   st.deadline = st.timerOn ? { kind: 'deal', at: now + st.rules.turnSeconds * 1000 } : null;
-  return [{ e: 'cut', count: c, players, wellCut, auto: uid === null }];
+  return [{ e: 'cut', pos, off, players, wellCut, auto: uid === null }];
 }
 
 /** The dealer distributes the locked cards. Pass uid null for the automatic deal (timer on). */
@@ -778,14 +820,14 @@ export function callOff(st: State, uid: string, now: number): GameEvent[] {
 }
 
 /** Runs whatever is due: next game, and (timer on) auto-cut, auto-deal or auto-pack. */
-export function onDeadline(st: State, now: number, autoCutCount: () => number): GameEvent[] {
+export function onDeadline(st: State, now: number): GameEvent[] {
   const d = st.deadline;
   if (!d || now < d.at) return [];
   switch (d.kind) {
     case 'next_game':
       return st.phase === 'game_over' ? nextGame(st, now) : [];
     case 'cut':
-      return st.phase === 'cutting' ? cut(st, null, autoCutCount(), now) : [];
+      return st.phase === 'cutting' ? cut(st, null, now, now) : [];
     case 'deal':
       return st.phase === 'dealing' ? deal(st, null, now) : [];
     case 'turn': {
@@ -825,7 +867,9 @@ export interface PlayerView {
   wellCutCount: number;
   wellCutsThisRound: number;
   lastCut: CutInfo | null;
-  rules: { blind: number; seen: number; sideshow: number; maxLoan: number; startingCoins: number; extraBlinds: number; turnSeconds: number };
+  /** The timing bar while the dealer cuts: every phone draws the same slider from this. */
+  cutBar: CutBar | null;
+  rules: { blind: number; seen: number; sideshow: number; maxLoan: number; startingCoins: number; extraBlinds: number; turnSeconds: number; wellCutZone: number };
   players: {
     name: string; coins: number; loan: number; status: PlayerStatus; seen: boolean; connected: boolean;
     cardCount: number; cards: string[] | null; isAdmin: boolean; isDealer: boolean;
@@ -873,7 +917,8 @@ export function viewFor(st: State, uid: string): PlayerView {
     wellCut: { active: st.wellCut.active, game: wellCutGameNo(st), sequence: st.rules.wellCutSequence },
     wellCutCount: st.wellCutCount, wellCutsThisRound: st.wellCutsThisRound,
     lastCut: st.phase === 'cutting' ? null : st.lastCut,
-    rules: { blind: st.rules.blindCost, seen: st.rules.seenCost, sideshow: st.rules.sideshowCost, maxLoan: st.rules.maxLoan, startingCoins: st.rules.startingCoins, extraBlinds: st.rules.extraBlindActions, turnSeconds: st.rules.turnSeconds },
+    cutBar: st.phase === 'cutting' ? st.cutBar : null,
+    rules: { blind: st.rules.blindCost, seen: st.rules.seenCost, sideshow: st.rules.sideshowCost, maxLoan: st.rules.maxLoan, startingCoins: st.rules.startingCoins, extraBlinds: st.rules.extraBlindActions, turnSeconds: st.rules.turnSeconds, wellCutZone: st.rules.wellCutZone },
     players: st.players.map((p, i) => ({
       name: p.name, coins: p.coins, loan: p.loan, status: p.status, seen: p.seen, connected: p.connected,
       cardCount: p.cards.length, cards: i === me || shown.includes(i) ? p.cards.map(cardCode) : null,

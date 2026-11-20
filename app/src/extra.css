@@ -111,3 +111,37 @@ button.chip-tag b{color:var(--ivory)}
 .sr-grid b{display:block; color:var(--ivory); font-size:13px}
 .games-list{background:var(--night-2); border:1px solid var(--line); border-radius:16px; padding:10px 12px; font-size:13px}
 .games-list summary{cursor:pointer; font-weight:700; color:var(--brass-2)}
+
+/* ---------- §5 Well Cut timing bar on the felt ---------- */
+.cutbar-panel{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:7; width:152px; padding:12px 12px 10px; border-radius:22px;
+  display:flex; flex-direction:column; align-items:center; gap:8px; touch-action:manipulation; cursor:pointer;
+  background:linear-gradient(180deg, rgba(10,16,28,.94), rgba(14,22,38,.94)); border:1.5px solid rgba(200,150,62,.75);
+  box-shadow:0 0 0 4px rgba(0,0,0,.25), 0 18px 40px rgba(0,0,0,.6), 0 0 30px rgba(244,163,0,.15);
+  animation:cbIn .35s cubic-bezier(.2,1.4,.4,1)}
+@keyframes cbIn{from{transform:translate(-50%,-50%) scale(.7); opacity:0}}
+.cutbar-panel.won{border-color:var(--win); box-shadow:0 0 0 4px rgba(0,0,0,.25), 0 0 46px rgba(47,191,113,.55)}
+.cutbar-panel.missed{border-color:rgba(154,166,188,.5); animation:cbShake .35s}
+@keyframes cbShake{20%{transform:translate(calc(-50% - 6px),-50%)}40%{transform:translate(calc(-50% + 6px),-50%)}60%{transform:translate(calc(-50% - 3px),-50%)}}
+.cb-title{font:800 15px/1.05 var(--display); letter-spacing:.06em; text-align:center; min-height:16px;
+  background:linear-gradient(180deg,#FFF6DD,#F4A300); -webkit-background-clip:text; background-clip:text; color:transparent}
+.cutbar-panel.missed .cb-title{background:linear-gradient(180deg,#F5EFE3,#9AA6BC); -webkit-background-clip:text; background-clip:text}
+.cutbar-panel.won .cb-title{font-size:19px}
+.cb-sub{font-size:10.5px; font-weight:700; color:var(--brass-2); text-align:center; line-height:1.25}
+.cb-bar{position:relative; width:62px; height:min(230px, 34vh); border-radius:13px; border:2px solid var(--brass);
+  box-shadow:0 0 0 3px rgba(0,0,0,.35), inset 0 6px 14px rgba(0,0,0,.55);
+  background:linear-gradient(180deg,#7E1D24 0%,#B5322F 14%,#C9682A 30%,#C9922A 42%,#C9922A 58%,#C9682A 70%,#B5322F 86%,#7E1D24 100%)}
+.cb-ticks{position:absolute; inset:0; border-radius:11px; background:repeating-linear-gradient(180deg, transparent 0 calc(10% - 1px), rgba(0,0,0,.28) calc(10% - 1px) 10%)}
+.cb-zone{position:absolute; left:0; right:0; top:50%; transform:translateY(-50%); opacity:0; transition:opacity .25s; z-index:1;
+  background:linear-gradient(90deg,#1F8F52,#2FBF71 45%,#5BE39A 55%,#2FBF71 65%,#1F8F52); box-shadow:0 0 16px rgba(47,191,113,.9)}
+.cb-zone.show{opacity:1}
+.cb-mid{position:absolute; left:-2px; right:-2px; top:50%; height:2px; transform:translateY(-50%); z-index:2; background:rgba(255,232,170,.95); box-shadow:0 0 8px rgba(244,163,0,.9)}
+.cb-mid::before,.cb-mid::after{content:''; position:absolute; top:50%; width:8px; height:8px; background:#FFE7A3; transform:translateY(-50%) rotate(45deg); box-shadow:0 0 6px var(--marigold)}
+.cb-mid::before{left:-12px} .cb-mid::after{right:-12px}
+.cb-needle{position:absolute; left:-10px; right:-10px; top:0; height:0; z-index:3; will-change:top}
+.cb-needle::before{content:''; position:absolute; left:8px; right:8px; top:-3.5px; height:7px; border-radius:4px; background:#FFF6DD; box-shadow:0 0 10px #fff, 0 0 18px var(--marigold)}
+.cb-needle .l,.cb-needle .r{position:absolute; top:-8px; width:0; height:0; border-top:8px solid transparent; border-bottom:8px solid transparent; filter:drop-shadow(0 0 4px var(--marigold))}
+.cb-needle .l{left:-3px; border-left:11px solid var(--marigold)}
+.cb-needle .r{right:-3px; border-right:11px solid var(--marigold)}
+.ab.cut-stop{flex:1; height:62px; border-radius:18px; font:800 26px var(--display); letter-spacing:.14em; color:#1A1206; touch-action:manipulation;
+  background:linear-gradient(135deg,#F4A300,#E2B865); box-shadow:0 6px 0 #9C6E22, 0 10px 24px rgba(244,163,0,.35); transition:transform .06s, box-shadow .06s}
+.ab.cut-stop:active{transform:translateY(5px); box-shadow:0 1px 0 #9C6E22}

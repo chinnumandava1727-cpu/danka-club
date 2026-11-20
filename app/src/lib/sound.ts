@@ -56,6 +56,7 @@ const SFX = {
   shuffle() { for (let i = 0; i < 16; i++) noise(0.04, 0.15, 2400 + Math.random() * 1500, 1.2, i * 0.06); noise(0.28, 0.2, 1800, 0.7, 1.0); },
   chime() { tone(880, 0.22, 'sine', 0.16); tone(1320, 0.32, 'sine', 0.14, 0.12); },
   tick() { tone(1900, 0.025, 'square', 0.04); },
+  stop() { tone(180, 0.12, 'square', 0.12); tone(90, 0.22, 'sine', 0.3); noise(0.05, 0.2, 700, 0.8); },
   thud() { tone(110, 0.22, 'sine', 0.35, 0, 55); noise(0.1, 0.15, 400, 0.7); },
   creak() { noise(0.06, 0.05, 1200 + Math.random() * 900, 6); },
   slide() { noise(0.25, 0.12, 1400, 0.6); },

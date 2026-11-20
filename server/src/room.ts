@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-  type GameEvent, type State, type Tx, DANKA_RULES, GameError, act, callOff, commitmentInput, createRoom, cryptoRandInt, cut, deal,
+  type GameEvent, type State, type Tx, DANKA_RULES, GameError, act, callOff, commitmentInput, createRoom, cut, deal,
   deckString, freshDeck, join, leave, needsDeck, onDeadline, prepareDeck, randomHex, seatOf, sessionReport, setConnected, setTableSize,
   setTimer, sha256Hex, shuffle, startRound, takeLoan, viewFor,
 } from '@danka/engine';
@@ -28,14 +28,14 @@ const TURN_GRACE_MS = 1500;
 const MAX_MSGS_PER_SEC = 20;
 
 /**
- * §4–§5 The dealer's cut. The dealer drags somewhere down the deck without seeing a number;
- * the exact count is their position plus a few cards of luck, so nobody can aim for a Well Cut.
+ * §5 The dealer's STOP on the Well Cut timing bar. The phone says when (in server time) the dealer
+ * tapped; the server only accepts a moment from the last fraction of a second before the tap
+ * arrived, so a phone can't pick a better moment after the fact. Anything outside is clamped.
  */
-export function cutCount(at: number): number {
-  const pos = Math.max(0, Math.min(1, Number.isFinite(at) ? at : 0.5));
-  const base = 3 + Math.round(pos * 44); // 3..47
-  const luck = cryptoRandInt(7) - 3; // −3..+3
-  return Math.max(1, Math.min(51, base + luck));
+const STOP_WINDOW_MS = 250;
+export function stopTime(claimed: number, arrived: number): number {
+  const at = Number.isFinite(claimed) ? claimed : arrived;
+  return Math.min(arrived, Math.max(arrived - STOP_WINDOW_MS, at));
 }
 
 /**
@@ -195,7 +195,7 @@ export class Room extends DurableObject<Env> {
         case 'size':
           return this.commit(setTableSize(g, me.uid, Number(msg.size)));
         case 'cut':
-          return this.commit(cut(g, me.uid, cutCount(Number(msg.at)), now));
+          return this.commit(cut(g, me.uid, stopTime(Number(msg.at), now), now));
         case 'deal':
           return this.commit(deal(g, me.uid, now));
         case 'leave': {
@@ -261,7 +261,7 @@ export class Room extends DurableObject<Env> {
       this.s = null;
       return;
     }
-    await this.commit(onDeadline(this.s.game, now, () => cutCount(Math.random())));
+    await this.commit(onDeadline(this.s.game, now));
   }
 
   /* ---------------- internals ---------------- */

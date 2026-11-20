@@ -10,7 +10,7 @@ export type ClientMsg =
   | { t: 'call_off' }
   | { t: 'timer'; on: boolean }
   | { t: 'size'; size: number }
-  /** The dealer's cut: how far down the deck they dragged, 0 (top) to 1 (bottom). The server adds luck. */
+  /** The dealer's STOP on the Well Cut timing bar: the server time at the tap (from the phone's synced clock). */
   | { t: 'cut'; at: number }
   | { t: 'deal' }
   /** `id` is a client-made unique id so a resend after a dropout is never applied twice. */

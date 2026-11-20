@@ -21,8 +21,11 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
 - When everyone else is Seen, the last Blind player gets 3 more Blind turns, then their cards are shown automatically.
 - Sideshow only when every active player is Seen: with the next active player on your left, costs 2, can't be refused,
   compared privately, weaker hand folds.
-- The dealer drags down the deck to cut. If the number of cut cards divides exactly by the active players, it is a
-  **Well Cut**: four compulsory games of 4, 3, 2 and 1 cards. The round clock never interrupts a Well Cut.
+- **Well Cut timing bar.** Before each normal game a slider runs up and down a bar on every phone. The dealer taps
+  STOP; stopping within 1.5% of the middle (the gold line) is a **Well Cut**: four compulsory games of 4, 3, 2 and
+  1 cards. The slider is fastest through the middle, changes speed every pass (crypto random) and speeds up, so it
+  can't be learned: about 3–5 Well Cuts per 80 games. The server accepts a stop time only from the last 0.25 s before
+  the tap arrived. The round clock never interrupts a Well Cut.
 - Ranking: 3-card Teen Patti order; 2-card (pair beats no pair); 1-card (highest card); 4-card (Four of a Kind highest).
   Suits break every tie: Spades > Hearts > Diamonds > Clubs, so there is never a draw.
 - Bonus N×(N−1), only when the holder wins the game: Three of a Kind in normal 3-card games, Four of a Kind in Well Cut game 1.

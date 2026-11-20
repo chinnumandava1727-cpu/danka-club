@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   DANKA_RULES, GameError, act, activeSeats, callOff, cardCode, commitmentInput, createRoom, cut, deal, dealOrder, deckString,
   freshDeck, join, leave, nextGame, onDeadline, parseCard, prepareDeck, setTimer, sha256Hex, shuffle, startRound, takeLoan,
-  viewFor, type Card, type State,
+  viewFor, barPosition, type Card, type State,
 } from '../src';
 
 const NAMES = ['Rc', 'Srinu', 'Ravi', 'Kiran', 'Babji', 'Prasad', 'Naidu'];
@@ -44,11 +44,17 @@ async function shuffleIn(st: State, deck: Card[] = shuffle(freshDeck())) {
   prepareDeck(st, deck, salt, await sha256Hex(commitmentInput(deckString(deck), salt)), now);
 }
 
-/** Start a round and get to betting with a non-Well-Cut cut (count chosen to leave a remainder). */
+/** Stop the slider at the top of the bar (a miss) or exactly in the middle of the first pass (a Well Cut). */
+const cutMiss = (st: State, u: string | null = st.dealerUid) => cut(st, u, st.cutBar!.startAt, now);
+const cutWell = (st: State, u: string | null = st.dealerUid) => cut(st, u, st.cutBar!.startAt + st.cutBar!.durs[0] / 2, now);
+/** The moment in the first pass when the slider is at position p (0 top … 1 bottom). */
+const timeAt = (st: State, p: number) => st.cutBar!.startAt + (Math.acos(1 - 2 * p) / Math.PI) * st.cutBar!.durs[0];
+
+/** Start a round and get to betting without a Well Cut. */
 async function toBetting(st: State, want: Record<number, string[]> = {}) {
   if (st.phase === 'lobby' || st.phase === 'placecut') startRound(st, uid(0), now);
   await shuffleIn(st, rig(st, want));
-  if (st.phase === 'cutting') cut(st, st.dealerUid, activeSeats(st).length + 1, now);
+  if (st.phase === 'cutting') cutMiss(st);
   deal(st, st.dealerUid, now);
 }
 
@@ -74,7 +80,7 @@ describe('rooms (tests 1, 3, 27, 31, 33)', () => {
     startRound(st, uid(0), now);
     expect(st.dealerUid).toBe(uid(0));
     await shuffleIn(st);
-    expectCode(() => cut(st, uid(2), 20, now), 'not_dealer');
+    expectCode(() => cutMiss(st, uid(2)), 'not_dealer');
     expect(viewFor(st, uid(0)).options.cut).toBe(true);
   });
 
@@ -90,7 +96,7 @@ describe('rooms (tests 1, 3, 27, 31, 33)', () => {
     expectCode(() => join(st, 'late', 'Late', now), 'round_in_progress');
     expectCode(() => leave(st, uid(1), now), 'round_in_progress');
     await shuffleIn(st);
-    cut(st, uid(0), 4, now); deal(st, uid(0), now);
+    cutMiss(st, uid(0)); deal(st, uid(0), now);
     a(st, 1, 'pack'); a(st, 2, 'pack');
     now = st.roundEndsAt! + 1;
     nextGame(st, now);
@@ -111,36 +117,69 @@ describe('rooms (tests 1, 3, 27, 31, 33)', () => {
 });
 
 describe('dealing and the Well Cut (tests 6–9)', () => {
-  it('6. the cut count is hidden until locked, then the cards are dealt from the deck', async () => {
+  it('6. the dealer stops the timing bar; every phone sees the same bar while cutting, the result after', async () => {
     const st = room(7);
     startRound(st, uid(0), now);
     await shuffleIn(st);
-    expect(viewFor(st, uid(0)).lastCut).toBeNull();
-    cut(st, uid(0), 20, now);
-    expect(viewFor(st, uid(0)).lastCut).toEqual({ count: 20, players: 7, wellCut: false });
+    const v = viewFor(st, uid(3));
+    expect(v.cutBar).toEqual(st.cutBar);
+    expect(v.cutBar!.startAt).toBe(now + DANKA_RULES.cutBarLeadMs);
+    expect(v.lastCut).toBeNull();
+    cutMiss(st, uid(0));
+    expect(viewFor(st, uid(0)).lastCut).toMatchObject({ players: 7, wellCut: false, pos: 0 });
+    expect(viewFor(st, uid(0)).cutBar).toBeNull();
     expect(st.players.every((p) => p.cards.length === 3)).toBe(true);
   });
 
-  it('7. Well Cut = the picked count divides exactly by the active players, for 2–7 players', async () => {
-    const cases: [number, number, boolean][] = [
-      [7, 20, false], [7, 21, true], [7, 30, false], [7, 35, true], [7, 40, false], [7, 42, true],
-      [2, 10, true], [2, 11, false], [3, 12, true], [4, 18, false], [5, 25, true], [6, 13, false],
-    ];
-    for (const [n, count, wc] of cases) {
-      const st = room(n);
+  it('7. Well Cut = stopping within 1.5% of the middle of the bar, on any pass', async () => {
+    const cases: [number, boolean][] = [[0.5, true], [0.514, true], [0.486, true], [0.516, false], [0.484, false], [0.3, false], [0.95, false], [0, false]];
+    for (const [p, wc] of cases) {
+      const st = room(3);
       startRound(st, uid(0), now);
       await shuffleIn(st);
-      cut(st, uid(0), count, now);
-      expect(st.lastCut!.wellCut, `${count} cards / ${n} players`).toBe(wc);
+      cut(st, uid(0), timeAt(st, p), now);
+      expect(st.lastCut!.wellCut, `stopped at ${p}`).toBe(wc);
       expect(st.cardsEach).toBe(wc ? 4 : 3);
     }
+    // the middle of the third pass (bottom → top) is a Well Cut too
+    const st = room(2);
+    startRound(st, uid(0), now);
+    await shuffleIn(st);
+    const d = st.cutBar!.durs;
+    cut(st, uid(0), st.cutBar!.startAt + d[0] + d[1] + d[2] / 2, now);
+    expect(st.lastCut!.wellCut).toBe(true);
+  });
+
+  it('7b. the slider changes speed every pass, speeds up, and eases fastest through the middle', async () => {
+    const st = room(2);
+    startRound(st, uid(0), now);
+    await shuffleIn(st);
+    const bar = st.cutBar!;
+    expect(new Set(bar.durs.slice(0, 10)).size).toBeGreaterThan(5);
+    expect(bar.durs.slice(0, 5).reduce((a, b) => a + b) / 5).toBeGreaterThan(bar.durs.slice(20, 25).reduce((a, b) => a + b) / 5);
+    expect(barPosition(bar, bar.startAt)).toBe(0);
+    expect(barPosition(bar, bar.startAt + bar.durs[0])).toBeCloseTo(1, 6);
+    const mid = barPosition(bar, bar.startAt + bar.durs[0] / 2 + 10) - barPosition(bar, bar.startAt + bar.durs[0] / 2);
+    const end = barPosition(bar, bar.startAt + 10) - barPosition(bar, bar.startAt);
+    expect(mid).toBeGreaterThan(end * 10);
+  });
+
+  it('7c. random stops land in the Well Cut zone rarely (about 2%)', async () => {
+    const st = room(2);
+    startRound(st, uid(0), now);
+    await shuffleIn(st);
+    let hits = 0;
+    const N = 20000;
+    for (let k = 0; k < N; k++) if (Math.abs(barPosition(st.cutBar!, st.cutBar!.startAt + Math.random() * 15000) - 0.5) * 100 <= 1.5) hits++;
+    expect(hits / N).toBeGreaterThan(0.01);
+    expect(hits / N).toBeLessThan(0.035);
   });
 
   it('8. a Well Cut starts four compulsory games of 4, 3, 2 and 1 cards; the winner deals each; then normal play resumes', async () => {
     const st = room(3);
     startRound(st, uid(0), now);
     await shuffleIn(st);
-    cut(st, uid(0), 9, now); // 9 / 3 = Well Cut
+    cutWell(st, uid(0));
     const sizes: number[] = [];
     const dealers: string[] = [];
     for (let g = 0; g < 4; g++) {
@@ -165,7 +204,7 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
     const st = room(2);
     startRound(st, uid(0), now);
     await shuffleIn(st);
-    cut(st, uid(0), 2, now); deal(st, uid(0), now);
+    cutWell(st, uid(0)); deal(st, uid(0), now);
     a(st, st.turn, 'pack');
     now = st.roundEndsAt! + 60_000;
     nextGame(st, now);
@@ -178,7 +217,7 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
     startRound(st, uid(0), now);
     const deck = shuffle(freshDeck());
     await shuffleIn(st, deck);
-    cut(st, uid(0), 5, now);
+    cutMiss(st, uid(0));
     expect(st.players[1].cards[0]).toEqual(deck[0]);
     expect(st.players[2].cards[0]).toEqual(deck[1]);
     expect(st.players[0].cards[0]).toEqual(deck[3]);
@@ -192,7 +231,7 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
     expect(st.dealerUid).toBe(uid(0));
     nextGame(st, now);
     await shuffleIn(st);
-    cut(st, uid(0), 4, now); deal(st, uid(0), now);
+    cutMiss(st, uid(0)); deal(st, uid(0), now);
     a(st, 1, 'pack'); a(st, 2, 'blind'); a(st, 0, 'pack');
     expect(st.dealerUid).toBe(uid(2));
   });
@@ -315,7 +354,7 @@ describe('bonuses (tests 21, 22, 32)', () => {
     const st = room(3);
     startRound(st, uid(0), now);
     await shuffleIn(st, rig(st, { 2: ['9s', '9h', '9d', '9c'] }, 4));
-    cut(st, uid(0), 3, now); // Well Cut
+    cutWell(st, uid(0));
     deal(st, uid(0), now);
     a(st, 1, 'pack'); a(st, 2, 'blind'); a(st, 0, 'pack');
     expect(st.result!.bonus).toEqual({ kind: 'quad', total: 6, each: 3 });
@@ -325,7 +364,7 @@ describe('bonuses (tests 21, 22, 32)', () => {
     const st = room(2);
     startRound(st, uid(0), now);
     await shuffleIn(st);
-    cut(st, uid(0), 2, now); deal(st, uid(0), now); a(st, st.turn, 'pack');
+    cutWell(st, uid(0)); deal(st, uid(0), now); a(st, st.turn, 'pack');
     for (let g = 2; g <= 4; g++) {
       nextGame(st, now); await shuffleIn(st); deal(st, st.dealerUid, now); a(st, st.turn, 'pack');
       expect(st.result!.bonus).toBeNull();
@@ -367,7 +406,7 @@ describe('bank, loans and elimination (tests 24, 25)', () => {
     startRound(st, uid(0), now);
     st.players[0].coins += st.players[1].coins; st.players[1].coins = 0; st.players[1].loan = 100; st.players[0].loan += 100;
     await shuffleIn(st);
-    cut(st, uid(0), 5, now); // 5 cards / 2 active players: not a Well Cut
+    cutMiss(st, uid(0)); // 5 cards / 2 active players: not a Well Cut
     deal(st, uid(0), now);
     expect(st.players[1].status).toBe('eliminated');
     expect(st.turn).toBe(2);
@@ -375,7 +414,7 @@ describe('bank, loans and elimination (tests 24, 25)', () => {
     nextGame(st, now);
     expect(st.players[1].status).toBe('eliminated');
     now = st.roundEndsAt! + 1;
-    await shuffleIn(st); cut(st, st.dealerUid, 5, now); deal(st, st.dealerUid, now); a(st, st.turn, 'pack');
+    await shuffleIn(st); cutMiss(st); deal(st, st.dealerUid, now); a(st, st.turn, 'pack');
     nextGame(st, now);
     expect(st.phase).toBe('placecut');
     startRound(st, uid(0), now);
@@ -390,7 +429,7 @@ describe('rounds, Placecut and settlement (tests 26, 28, 29)', () => {
     st.players[1].coins += st.players[0].coins; st.players[0].coins = 0; st.players[0].loan = 100; st.players[1].loan += 100;
     st.dealerUid = uid(0);
     now = st.roundEndsAt! + 1;
-    await shuffleIn(st); cut(st, uid(0), 5, now); deal(st, uid(0), now);
+    await shuffleIn(st); cutMiss(st, uid(0)); deal(st, uid(0), now);
     a(st, 1, 'pack'); a(st, 2, 'blind'); // the admin's turn: out of coins and loan → eliminated
     expect(st.players[0].status).toBe('eliminated');
     expect(st.phase).toBe('game_over');
@@ -407,7 +446,7 @@ describe('rounds, Placecut and settlement (tests 26, 28, 29)', () => {
     const st = room(3);
     startRound(st, uid(0), now);
     expect(st.roundEndsAt).toBe(now + 20 * 60_000);
-    await shuffleIn(st); cut(st, uid(0), 4, now); deal(st, uid(0), now);
+    await shuffleIn(st); cutMiss(st, uid(0)); deal(st, uid(0), now);
     now += 21 * 60_000;
     a(st, 1, 'blind'); // the game continues past zero
     a(st, 2, 'pack'); a(st, 0, 'pack');
@@ -454,7 +493,7 @@ describe('timer switch and games with 2–7 players (tests 2, 32)', () => {
     expect(st.deadline).toBeNull();
     setTimer(st, uid(0), true, now);
     now += 31_000;
-    const ev = onDeadline(st, now, () => 10);
+    const ev = onDeadline(st, now);
     expect(ev[0]).toMatchObject({ e: 'pack', seat: 1, reason: 'timeout' });
     expectCode(() => setTimer(st, uid(1), false, now), 'not_admin');
   });
@@ -465,7 +504,7 @@ describe('timer switch and games with 2–7 players (tests 2, 32)', () => {
       startRound(st, uid(0), now);
       for (let g = 0; g < 25; g++) {
         await shuffleIn(st);
-        if (st.phase === 'cutting') cut(st, st.dealerUid, 1 + Math.floor(Math.random() * 51), now);
+        if (st.phase === 'cutting') cut(st, st.dealerUid, st.cutBar!.startAt + Math.random() * 8000, now);
         deal(st, st.dealerUid, now);
         let guard = 400;
         while (st.phase === 'betting' && guard-- > 0) {

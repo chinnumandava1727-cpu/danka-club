@@ -27,6 +27,19 @@ export interface DankaRules {
   turnSeconds: number;
   /** Pause between the end of one game and the start of the next. */
   nextGameSeconds: number;
+  /**
+   * §5 The Well Cut timing bar. A slider runs up and down a bar; the dealer stops it.
+   * Stopping within `wellCutZone` percent of the middle (either side) is a Well Cut.
+   * Tuned for about 3–5 Well Cuts per 80 games.
+   */
+  wellCutZone: number;
+  /** Time for the first pass, ms. Each pass varies by ±`cutBarJitter` and is `cutBarAccel` times the last, down to `cutBarFloor` × the first. */
+  cutBarPassMs: number;
+  cutBarJitter: number;
+  cutBarAccel: number;
+  cutBarFloor: number;
+  /** Lead-in before the slider starts moving, so every phone sees it start. */
+  cutBarLeadMs: number;
 }
 
 export const DANKA_RULES: Readonly<DankaRules> = Object.freeze({
@@ -43,6 +56,12 @@ export const DANKA_RULES: Readonly<DankaRules> = Object.freeze({
   roundMinutes: 20,
   turnSeconds: 30,
   nextGameSeconds: 8,
+  wellCutZone: 1.5,
+  cutBarPassMs: 600,
+  cutBarJitter: 0.3,
+  cutBarAccel: 0.91,
+  cutBarFloor: 0.55,
+  cutBarLeadMs: 1200,
 });
 
 export const MAX_SEATS = 7;

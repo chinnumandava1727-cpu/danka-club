@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { verifyCommitment, type GameEvent, type PlayerView } from '@danka/engine';
+import { barPosition, verifyCommitment, type CutBar, type GameEvent, type PlayerView } from '@danka/engine';
 import { tokenFor, type Me } from '../lib/identity';
 import { RoomClient, SERVER, type Quality, type ServerMsg, type Status } from '../lib/net';
 import { play } from '../lib/sound';
@@ -56,6 +56,8 @@ function useTicker(ms: number, on = true) {
 
 type Sheet = null | 'ledger' | 'result' | 'leave' | 'admin' | 'loan';
 type Banner = { title: string; sub: string; kind: 'wellcut' | 'bonus' | 'round' } | null;
+/** The timing bar's result, held on screen for a moment after the dealer stops it. */
+type Frozen = { pos: number; off: number; wellCut: boolean; zone: number; auto: boolean } | null;
 
 export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: string; toast: ToastFn; onExit: (msg?: string) => void; onSettings: () => void }) {
   const [view, setView] = useState<PlayerView | null>(null);
@@ -64,6 +66,8 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
   const [dealing, setDealing] = useState(false);
   const [showing, setShowing] = useState(false);
   const [banner, setBanner] = useState<Banner>(null);
+  const [frozen, setFrozen] = useState<Frozen>(null);
+  const frozenTimer = useRef(0);
   const [reactTo, setReactTo] = useState<number | null>(null);
   const [verify, setVerify] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -151,14 +155,25 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
         case 'round': play('gong'); buzz(HAP.rise); showBanner({ kind: 'round', title: `Round ${e.round}`, sub: `${Math.max(1, Math.round((e.endsAt - Date.now()) / 60000))} minute${Math.round((e.endsAt - Date.now()) / 60000) > 1 ? 's' : ''} on the clock` }, 2200); break;
         case 'game': if (e.wellCutGame && e.wellCutGame > 1) { play('chime'); showBanner({ kind: 'wellcut', title: `Well Cut · game ${e.wellCutGame} of 4`, sub: `${e.cardsEach} card${e.cardsEach === 1 ? '' : 's'} each` }, 2200); } break;
         case 'commit': shuffleDeck(); play('shuffle'); break;
-        case 'cut':
+        case 'cut': {
+          // hold the bar on screen, frozen where it stopped, with the hidden target revealed
+          setFrozen({ pos: e.pos, off: e.off, wellCut: e.wellCut, zone: v.rules.wellCutZone, auto: e.auto });
+          clearTimeout(frozenTimer.current);
+          frozenTimer.current = window.setTimeout(() => setFrozen(null), e.wellCut ? 3600 : 2400);
+          play('stop');
           if (e.wellCut) {
-            play('fanfare', true); buzz(HAP.win);
-            showBanner({ kind: 'wellcut', title: 'WELL CUT!', sub: `${e.count} cards ÷ ${e.players} players. Four games: 4, 3, 2, 1 cards` }, 3400);
+            // celebrate out of the bar itself, so everyone can still see where the slider stopped
+            setTimeout(() => {
+              play('fanfare', true); buzz(HAP.win);
+              const c = centerOf(document.querySelector('.cutbar-panel .cb-mid'));
+              burst(c, ['#F4A300', '#FFF6DD', '#2FBF71', '#5BE39A', '#C8963E'], 34);
+              setTimeout(() => burst(c, ['#F4A300', '#FFF6DD', '#2FBF71'], 22), 260);
+            }, 300);
           } else {
-            play('slide'); toast(`Cut ${e.count} cards for ${e.players} players${e.auto ? ' (timer)' : ''}. No Well Cut.`);
+            setTimeout(() => { play('lose'); buzz(HAP.thud); }, 250);
           }
           break;
+        }
         case 'deal': {
           setDealing(true);
           const per = settings.reduce ? 20 : Math.max(45, 75 - e.order.length * 3);
@@ -303,7 +318,7 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
 
   return (
     <>
-      <Table view={view} code={code} client={send} quality={quality} dealing={dealing} onSheet={setSheet} onReact={setReactTo} onSettings={onSettings} />
+      <Table view={view} code={code} client={send} quality={quality} dealing={dealing} frozen={frozen} onSheet={setSheet} onReact={setReactTo} onSettings={onSettings} />
       {offlineBanner}
       {banner && <div key={banner.title + banner.sub} className={`big-banner ${banner.kind}`} role="status"><b>{banner.title}</b><span>{banner.sub}</span></div>}
       <ShowOverlay view={view} on={showing} />
@@ -533,7 +548,7 @@ function AdminSheet({ open, view, client, exporting, onExport, onClose }: { open
 
 /* ================= TABLE ================= */
 
-function Table({ view, code, client, quality, dealing, onSheet, onReact, onSettings }: { view: PlayerView; code: string; client: RoomClient; quality: { q: Quality; rtt: number }; dealing: boolean; onSheet: (s: Sheet) => void; onReact: (seat: number) => void; onSettings: () => void }) {
+function Table({ view, code, client, quality, dealing, frozen, onSheet, onReact, onSettings }: { view: PlayerView; code: string; client: RoomClient; quality: { q: Quality; rtt: number }; dealing: boolean; frozen: Frozen; onSheet: (s: Sheet) => void; onReact: (seat: number) => void; onSettings: () => void }) {
   useTicker(1000);
   const you = view.you, n = view.players.length;
   const me = view.players[you];
@@ -574,7 +589,7 @@ function Table({ view, code, client, quality, dealing, onSheet, onReact, onSetti
 
   const status =
     view.phase === 'shuffling' ? 'Shuffling a fresh deck…'
-    : view.phase === 'cutting' ? (o.cut ? `You deal. Drag down the deck and let go to cut${dl !== null ? ` · ${dl}` : ''}.` : `${dealerName} is cutting the deck…`)
+    : view.phase === 'cutting' ? (o.cut ? `You cut. Tap STOP when the slider is on the gold line${dl !== null ? ` · ${dl}` : ''}.` : `${dealerName} is cutting. Stopping on the gold line is a Well Cut.`)
     : view.phase === 'dealing' ? (o.deal ? `Tap the deck to deal ${view.cardsEach} card${view.cardsEach === 1 ? '' : 's'} each${dl !== null ? ` · ${dl}` : ''}.` : `${dealerName} is dealing`)
     : view.phase === 'betting' ? (
       !me ? ''
@@ -601,18 +616,14 @@ function Table({ view, code, client, quality, dealing, onSheet, onReact, onSetti
       </div>
       <div id="table-area" ref={area}>
         <div className="felt" />
-        <div className={`center${o.cut ? ' cutting' : ''}`}>
-          {o.cut
-            ? <CutPad onCut={(at) => { client.send({ t: 'cut', at }); }} />
-            : (
-              <div id="deck" role="button" aria-label={o.deal ? 'Tap to deal' : 'Deck'} className={o.deal ? 'pulse' : ''} onClick={() => { if (o.deal) { client.send({ t: 'deal' }); buzz(HAP.click); } }}>
-                <div className="dk back" /><div className="dk back" /><div className="dk back" />
-              </div>
-            )}
+        <div className="center">
+          <div id="deck" role="button" aria-label={o.deal ? 'Tap to deal' : 'Deck'} className={o.deal ? 'pulse' : ''} onClick={() => { if (o.deal) { client.send({ t: 'deal' }); buzz(HAP.click); } }}>
+            <div className="dk back" /><div className="dk back" /><div className="dk back" />
+          </div>
           <div className="fp num">{view.commit ? `Fingerprint ${view.commit.slice(0, 8)}` : 'Fingerprint ········'}</div>
-          <div className="deal-prompt">{o.deal ? 'Tap to deal' : view.phase === 'cutting' && !o.cut ? `${dealerName} cuts…` : ''}</div>
+          <div className="deal-prompt">{o.deal ? 'Tap to deal' : ''}</div>
           <div className="pot"><small>POT</small><b className="num">{fmt(view.pot)}</b></div>
-          <div className="stake num">Blind {view.rules.blind} · Seen {view.rules.seen}{view.lastCut && !view.wellCut.active ? ` · cut ${view.lastCut.count}` : ''}</div>
+          <div className="stake num">Blind {view.rules.blind} · Seen {view.rules.seen}</div>
           {view.wellCut.active && <div className="wc-chip">WELL CUT · {view.wellCut.game}/4 · {view.cardsEach} card{view.cardsEach === 1 ? '' : 's'}</div>}
           {view.callOff && <div className="mode-info">Last game: called off</div>}
         </div>
@@ -637,6 +648,10 @@ function Table({ view, code, client, quality, dealing, onSheet, onReact, onSetti
           );
         })}
         <div id="dealer-btn" ref={dealerBtn}>D</div>
+        {(view.cutBar || frozen) && (
+          <CutBarPanel bar={view.cutBar} frozen={frozen} isDealer={!!o.cut} dealerName={dealerName} serverNow={client.serverNow}
+            onStop={() => { client.send({ t: 'cut', at: client.serverNow() }); }} />
+        )}
       </div>
       <div className={`me${view.turn === you && view.phase === 'betting' ? ' turn' : ''}${me && me.status !== 'in' ? ' packed' : ''}`} id="me" data-seat={you}>
         <div className="me-left">
@@ -656,6 +671,11 @@ function Table({ view, code, client, quality, dealing, onSheet, onReact, onSetti
       </div>
       <div className="actions">
         <div className="status-line">{status}</div>
+        {o.cut ? (
+          <div className="abtns">
+            <button className="ab cut-stop" onPointerDown={(e) => { e.preventDefault(); window.dispatchEvent(new Event('danka-stop')); }}>STOP</button>
+          </div>
+        ) : (
         <div className="abtns">
           <button className="ab pack" disabled={!o.pack || busy} onClick={() => bet('pack')}>Pack<small>fold</small></button>
           {me && !me.seen && <button className="ab see" disabled={!o.see} onClick={() => bet('see')}>See<small>cards</small></button>}
@@ -666,6 +686,7 @@ function Table({ view, code, client, quality, dealing, onSheet, onReact, onSetti
           {o.sideshow && <button className="ab raise" disabled={busy} onClick={() => bet('sideshow')}>Sideshow<small className="num">{o.sideshow.cost} · {sideTarget}</small></button>}
           {o.show !== null && <button className="ab show" disabled={busy} onClick={() => bet('show')}>Show<small className="num">{o.show}</small></button>}
         </div>
+        )}
       </div>
     </section>
   );
@@ -681,40 +702,77 @@ function Tag({ s }: { s: PlayerView['players'][number] }) {
   );
 }
 
-/* ---------- the dealer's cut: drag down the deck, let go where you want to cut ---------- */
-function CutPad({ onCut }: { onCut: (at: number) => void }) {
-  const pad = useRef<HTMLDivElement>(null);
-  // A ref, not only state: a quick flick can go down, move and up before React re-renders.
-  const cur = useRef<number | null>(null);
-  const done = useRef(false);
-  const [at, setAt] = useState<number | null>(null);
-  const [isDone, setDone] = useState(false);
-  const step = useRef(-1);
-  const pos = (e: React.PointerEvent) => {
-    const r = pad.current!.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
-  };
-  const set = (p: number | null) => { cur.current = p; setAt(p); };
+/* ---------- §5 the Well Cut timing bar: the same slider on every phone; only the dealer can stop it ---------- */
+function CutBarPanel({ bar, frozen, isDealer, dealerName, serverNow, onStop }: {
+  bar: CutBar | null; frozen: Frozen; isDealer: boolean; dealerName: string; serverNow: () => number; onStop: () => void;
+}) {
+  const needle = useRef<HTMLDivElement>(null);
+  const [stoppedAt, setStoppedAt] = useState<number | null>(null);
+  const [ready, setReady] = useState(true);
+  const live = !!bar && !frozen && stoppedAt === null;
+
+  // a new bar (a new cut) clears the local stop
+  useEffect(() => { setStoppedAt(null); }, [bar?.startAt]);
+
+  useEffect(() => {
+    if (!live || !bar) return;
+    let raf = 0, lastTick = -1, lastPass = -1;
+    const loop = () => {
+      const now = serverNow();
+      const waiting = now < bar.startAt;
+      setReady((r) => (r === waiting ? r : waiting));
+      const p = barPosition(bar, now);
+      if (needle.current) needle.current.style.top = `${(p * 100).toFixed(3)}%`;
+      if (!waiting) {
+        const k = Math.floor(p * 20);
+        if (k !== lastTick) { lastTick = k; if (isDealer) play('tick'); }
+        const pass = p > 0.97 || p < 0.03 ? Math.round(p) : -1;
+        if (pass !== -1 && pass !== lastPass) { lastPass = pass; if (isDealer) buzz(HAP.peek); }
+        if (pass === -1) lastPass = -1;
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [live, bar, isDealer, serverNow]);
+
+  // the dealer's STOP: the button in the action bar, a tap on the panel, or Space
+  useEffect(() => {
+    if (!live || !isDealer || !bar) return;
+    const stop = () => {
+      const now = serverNow();
+      if (now < bar.startAt) return;
+      setStoppedAt(barPosition(bar, now));
+      buzz(HAP.click);
+      onStop();
+    };
+    const key = (e: KeyboardEvent) => { if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); stop(); } };
+    window.addEventListener('danka-stop', stop);
+    window.addEventListener('keydown', key);
+    return () => { window.removeEventListener('danka-stop', stop); window.removeEventListener('keydown', key); };
+  }, [live, isDealer, bar, serverNow, onStop]);
+
+  const pos = frozen ? frozen.pos : stoppedAt;
+  useLayoutEffect(() => { if (pos !== null && needle.current) needle.current.style.top = `${(pos * 100).toFixed(3)}%`; }, [pos]);
+  const zone = frozen?.zone ?? bar?.zone ?? 1.5;
+  const title = frozen
+    ? (frozen.wellCut ? (frozen.off <= 0.4 ? 'PERFECT!' : 'WELL CUT!') : frozen.off - zone < 2 ? 'SO CLOSE!' : 'NO WELL CUT')
+    : stoppedAt !== null ? 'STOPPED…' : ready ? 'GET READY' : isDealer ? 'STOP ON THE LINE' : `${dealerName.toUpperCase()} IS CUTTING`;
+  const sub = frozen
+    ? (frozen.wellCut ? '4 games: 4, 3, 2, 1 cards' : `Missed by ${(frozen.off - zone).toFixed(1)}% · normal game${frozen.auto ? ' (timer)' : ''}`)
+    : isDealer ? 'Tap STOP or the bar' : 'Gold line = Well Cut';
+
   return (
-    <div className={`cut-pad${isDone ? ' done' : ''}`} ref={pad} role="slider" aria-label="Cut the deck: drag down and let go" aria-valuenow={Math.round((at ?? 0) * 100)}
-      onPointerDown={(e) => { if (done.current) return; pad.current?.setPointerCapture(e.pointerId); set(pos(e)); play('tap'); }}
-      onPointerMove={(e) => {
-        if (cur.current === null || done.current) return;
-        const p = pos(e);
-        set(p);
-        const s = Math.floor(p * 16);
-        if (s !== step.current) { step.current = s; play('flick'); buzz(HAP.peek); }
-      }}
-      onPointerUp={(e) => {
-        if (cur.current === null || done.current) return;
-        const p = pos(e);
-        done.current = true; setDone(true); set(p);
-        play('slide'); buzz(HAP.click); onCut(p);
-      }}
-      onPointerCancel={() => set(null)}>
-      {Array.from({ length: 14 }, (_, k) => <i key={k} className="edge" style={{ top: `${k * 7}%`, opacity: at !== null && k / 14 < at ? 0.35 : 1 }} />)}
-      {at !== null && <div className="cut-line" style={{ top: `${at * 100}%` }} />}
-      <span className="cut-hint">{isDone ? 'Cutting…' : at === null ? 'Drag down' : 'Let go to cut'}</span>
+    <div className={`cutbar-panel${frozen ? (frozen.wellCut ? ' won' : ' missed') : ''}`} role="group" aria-label="Well Cut timing bar"
+      onPointerDown={(e) => { if (isDealer && live) { e.preventDefault(); window.dispatchEvent(new Event('danka-stop')); } }}>
+      <div className="cb-title">{title}</div>
+      <div className="cb-bar">
+        <div className="cb-ticks" />
+        <div className={`cb-zone${frozen ? ' show' : ''}`} style={{ height: `${zone * 2}%` }} />
+        <div className="cb-mid" />
+        <div className={`cb-needle${live ? '' : ' still'}`} ref={needle}><span className="l" /><span className="r" /></div>
+      </div>
+      <div className="cb-sub">{sub}</div>
     </div>
   );
 }
