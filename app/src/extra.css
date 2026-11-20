@@ -145,3 +145,8 @@ button.chip-tag b{color:var(--ivory)}
 .ab.cut-stop{flex:1; height:62px; border-radius:18px; font:800 26px var(--display); letter-spacing:.14em; color:#1A1206; touch-action:manipulation;
   background:linear-gradient(135deg,#F4A300,#E2B865); box-shadow:0 6px 0 #9C6E22, 0 10px 24px rgba(244,163,0,.35); transition:transform .06s, box-shadow .06s}
 .ab.cut-stop:active{transform:translateY(5px); box-shadow:0 1px 0 #9C6E22}
+
+/* §4 round-by-round deal label */
+.deal-round{display:inline-block; padding:3px 10px; border-radius:999px; background:rgba(6,10,18,.75); border:1px solid rgba(244,163,0,.6); color:var(--marigold); font:800 12px var(--display); letter-spacing:.04em; animation:drIn .3s cubic-bezier(.2,1.5,.4,1)}
+@keyframes drIn{from{transform:scale(.6); opacity:0}}
+.abtns.locked{pointer-events:none; opacity:.4; filter:saturate(.5)}

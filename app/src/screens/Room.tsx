@@ -64,6 +64,9 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
   const [status, setStatus] = useState<Status>('connecting');
   const [sheet, setSheet] = useState<Sheet>(null);
   const [dealing, setDealing] = useState(false);
+  /** §4 Round-by-round deal on screen: which card round is flying, and how many rounds have landed. */
+  const [dealRound, setDealRound] = useState<{ r: number; of: number } | null>(null);
+  const [landed, setLanded] = useState(0);
   const [showing, setShowing] = useState(false);
   const [banner, setBanner] = useState<Banner>(null);
   const [frozen, setFrozen] = useState<Frozen>(null);
@@ -175,17 +178,25 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
           break;
         }
         case 'deal': {
-          setDealing(true);
-          const per = settings.reduce ? 20 : Math.max(45, 75 - e.order.length * 3);
-          let n = 0;
-          for (let r = 0; r < e.cardsEach; r++) for (const s of e.order) {
-            const delay = n++ * per;
-            const target = s === you ? centerOf(document.querySelectorAll('#my-cards .pc')[r] ?? null) : centerOf(seatMinis(s));
-            setTimeout(() => play('flick'), delay);
-            fly('fly-card back', '', centerOf(deckEl()), target, 260, { delay, arc: 26, spin: s === you ? 0 : 200, s1: s === you ? 1.6 : 0.7 })
-              .then(() => { play('land'); if (s === you) buzz(HAP.land); });
+          // §4 One card to each player, starting on the dealer's left; then the second round, third, and fourth after a Well Cut.
+          setDealing(true); setLanded(0);
+          const per = settings.reduce ? 25 : 150, gap = settings.reduce ? 60 : 420, fly1 = 260;
+          let t = 0;
+          for (let r = 0; r < e.cardsEach; r++) {
+            const start = t;
+            setTimeout(() => { setDealRound({ r: r + 1, of: e.cardsEach }); play('tick'); }, start);
+            e.order.forEach((s, k) => {
+              const delay = start + k * per;
+              const target = s === you ? centerOf(document.querySelectorAll('#my-cards .pc')[r] ?? null) : centerOf(seatMinis(s));
+              setTimeout(() => play('flick'), delay);
+              fly('fly-card back', '', centerOf(deckEl()), target, fly1, { delay, arc: 26, spin: s === you ? 0 : 200, s1: s === you ? 1.6 : 0.7 })
+                .then(() => { play('land'); if (s === you) buzz(HAP.land); });
+            });
+            t = start + e.order.length * per + fly1;
+            setTimeout(() => setLanded(r + 1), t);
+            t += gap;
           }
-          setTimeout(() => setDealing(false), n * per + 300);
+          setTimeout(() => { setDealing(false); setDealRound(null); }, t);
           break;
         }
         case 'turn': if (e.seat === you) { play('chime'); buzz(HAP.turn); } break;
@@ -318,7 +329,7 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
 
   return (
     <>
-      <Table view={view} code={code} client={send} quality={quality} dealing={dealing} frozen={frozen} onSheet={setSheet} onReact={setReactTo} onSettings={onSettings} />
+      <Table view={view} code={code} client={send} quality={quality} dealing={dealing} dealRound={dealRound} landed={landed} frozen={frozen} onSheet={setSheet} onReact={setReactTo} onSettings={onSettings} />
       {offlineBanner}
       {banner && <div key={banner.title + banner.sub} className={`big-banner ${banner.kind}`} role="status"><b>{banner.title}</b><span>{banner.sub}</span></div>}
       <ShowOverlay view={view} on={showing} />
@@ -548,7 +559,7 @@ function AdminSheet({ open, view, client, exporting, onExport, onClose }: { open
 
 /* ================= TABLE ================= */
 
-function Table({ view, code, client, quality, dealing, frozen, onSheet, onReact, onSettings }: { view: PlayerView; code: string; client: RoomClient; quality: { q: Quality; rtt: number }; dealing: boolean; frozen: Frozen; onSheet: (s: Sheet) => void; onReact: (seat: number) => void; onSettings: () => void }) {
+function Table({ view, code, client, quality, dealing, dealRound, landed, frozen, onSheet, onReact, onSettings }: { view: PlayerView; code: string; client: RoomClient; quality: { q: Quality; rtt: number }; dealing: boolean; dealRound: { r: number; of: number } | null; landed: number; frozen: Frozen; onSheet: (s: Sheet) => void; onReact: (seat: number) => void; onSettings: () => void }) {
   useTicker(1000);
   const you = view.you, n = view.players.length;
   const me = view.players[you];
@@ -622,7 +633,7 @@ function Table({ view, code, client, quality, dealing, frozen, onSheet, onReact,
             <div className="dk back" /><div className="dk back" /><div className="dk back" />
           </div>
           <div className="fp num">{view.commit ? `Fingerprint ${view.commit.slice(0, 8)}` : 'Fingerprint ········'}</div>
-          <div className="deal-prompt">{o.deal ? 'Tap to deal' : ''}</div>
+          <div className="deal-prompt">{dealRound ? <span className="deal-round" key={dealRound.r}>{['1st', '2nd', '3rd', '4th'][dealRound.r - 1]} card · round {dealRound.r} of {dealRound.of}</span> : o.deal ? 'Tap to deal' : ''}</div>
           <div className="pot"><small>POT</small><b className="num">{fmt(view.pot)}</b></div>
           <div className="stake num">Blind {view.rules.blind} · Seen {view.rules.seen}</div>
           {view.wellCut.active && <div className="wc-chip">WELL CUT · {view.wellCut.game}/4 · {view.cardsEach} card{view.cardsEach === 1 ? '' : 's'}</div>}
@@ -640,7 +651,7 @@ function Table({ view, code, client, quality, dealing, frozen, onSheet, onReact,
                 <button className="av" style={{ background: COLORS[i % 7] }} aria-label={`${s.name}: throw something`} onClick={() => { play('tap'); buzz(HAP.tick); onReact(i); }}>{ini(s.name)}</button>
                 <span className={`dot${s.connected ? '' : ' amber'}`} />
                 <div className="bubble" />
-                <div className="minis">{cardsVisible && s.status !== 'eliminated' && Array.from({ length: s.cardCount }, (_, c) => <div key={c} className="mini back" />)}</div>
+                <div className="minis">{(cardsVisible || dealing) && s.status !== 'eliminated' && Array.from({ length: dealing ? Math.min(s.cardCount, landed) : s.cardCount }, (_, c) => <div key={c} className="mini back" />)}</div>
               </div>
               <div className="nm">{s.name}</div>
               <div className="co num">{fmt(s.coins)}{s.loan ? <span className="owe"> −{s.loan}</span> : null}</div>
@@ -663,7 +674,7 @@ function Table({ view, code, client, quality, dealing, frozen, onSheet, onReact,
           <div className="co num">{fmt(me?.coins ?? 0)}</div>
           {me && <Tag s={me} />}
         </div>
-        <MyCards view={view} visible={cardsVisible} onSee={() => { if (o.see) bet('see'); }} />
+        <MyCards view={view} visible={cardsVisible} landed={dealing ? landed : -1} onSee={() => { if (o.see) bet('see'); }} />
         <div className="me-right">
           <div className="hand-name">{view.yourHand ?? ''}</div>
           <div className="squeeze-hint">{!cardsVisible || !me ? '' : me.seen ? 'You are Seen' : me.status === 'in' ? 'Drag up on your cards to squeeze' : ''}</div>
@@ -671,13 +682,13 @@ function Table({ view, code, client, quality, dealing, frozen, onSheet, onReact,
         </div>
       </div>
       <div className="actions">
-        <div className="status-line">{status}</div>
+        <div className="status-line">{dealing && dealRound ? `${dealerName === me?.name ? 'You are' : `${dealerName} is`} dealing · ${['1st', '2nd', '3rd', '4th'][dealRound.r - 1]} card to everyone` : status}</div>
         {o.cut ? (
           <div className="abtns">
             <button className="ab cut-stop" onPointerDown={(e) => { e.preventDefault(); window.dispatchEvent(new Event('danka-stop')); }}>STOP</button>
           </div>
         ) : (
-        <div className="abtns">
+        <div className={`abtns${dealing ? ' locked' : ''}`}>
           <button className="ab pack" disabled={!o.pack || busy} onClick={() => bet('pack')}>Pack<small>fold</small></button>
           {me && !me.seen && <button className="ab see" disabled={!o.see} onClick={() => bet('see')}>See<small>cards</small></button>}
           {loanNeed > 0
@@ -780,7 +791,7 @@ function CutBarPanel({ bar, frozen, isCutter, cutterName, dealerName, serverNow,
 }
 
 /* ---------- my cards: squeeze or double-tap to see ---------- */
-function MyCards({ view, visible, onSee }: { view: PlayerView; visible: boolean; onSee: () => void }) {
+function MyCards({ view, visible, landed, onSee }: { view: PlayerView; visible: boolean; landed: number; onSee: () => void }) {
   const me = view.players[view.you];
   const cards = me?.cards ?? [];
   const count = Math.max(cards.length, view.cardsEach || 3);
@@ -821,7 +832,7 @@ function MyCards({ view, visible, onSee }: { view: PlayerView; visible: boolean;
     <div id="my-cards" ref={area} className={`n${count}`} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
       aria-label="Your cards. Drag up to squeeze or double-tap to see them.">
       {Array.from({ length: count }, (_, k) => (
-        <div key={k} className={`pc${visible && cards[k] ? '' : ' empty'}`}>
+        <div key={k} className={`pc${(visible || k < landed) && cards[k] ? '' : ' empty'}`}>
           <div className={`flip${seen ? ' up' : ''}`}>
             {cards[k] && <CardFace code={cards[k]} />}
             <div className="bk back" />
