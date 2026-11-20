@@ -11,7 +11,8 @@ import { deliverPdf, settlementPdf } from '../lib/pdf';
 import type { ToastFn } from '../App';
 import { Icon } from './Icon';
 
-const COLORS = ['#F4A300', '#81B29A', '#E07A5F', '#F2CC8F', '#B8A1D9', '#6FB7E0', '#E9A6A6'];
+const COLORS = ['#F4A300', '#81B29A', '#E07A5F', '#F2CC8F', '#B8A1D9', '#6FB7E0', '#E9A6A6', '#9FD3C7', '#D9A5F2', '#C9D97A'];
+const colorOf = (i: number) => COLORS[i % COLORS.length];
 // Where the other players sit around the felt, clockwise from your left (you are always bottom-centre).
 type Pos = { x: number; y: number; s: 'sl' | 'sr' };
 const L = (x: number, y: number): Pos => ({ x, y, s: x <= 50 ? 'sl' : 'sr' });
@@ -22,6 +23,9 @@ const LAYOUTS: Record<number, Pos[]> = {
   4: [L(9, 44), L(24, 15), L(76, 15), L(91, 44)],
   5: [L(13, 71), L(9, 44), L(50, 13), L(91, 44), L(87, 71)],
   6: [L(13, 71), L(9, 44), L(24, 15), L(76, 15), L(91, 44), L(87, 71)],
+  7: [L(13, 75), L(8, 51), L(15, 26), L(50, 10), L(85, 26), L(92, 51), L(87, 75)],
+  8: [L(13, 77), L(8, 55), L(11, 32), L(33, 11), L(67, 11), L(89, 32), L(92, 55), L(87, 77)],
+  9: [L(14, 80), L(8, 61), L(9, 40), L(20, 18), L(50, 9), L(80, 18), L(91, 40), L(92, 61), L(86, 80)],
 };
 const posFor = (k: number, n: number): Pos | undefined => LAYOUTS[n - 1]?.[k - 1];
 const ini = (name: string) => name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '?';
@@ -405,7 +409,7 @@ function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin }: { vie
           return (
             <div key={i} className="lrow pop">
               <span className="ord">#{i + 1}</span>
-              <span className="lav" style={{ background: COLORS[i % 7] }}>{ini(s.name)}</span>
+              <span className="lav" style={{ background: colorOf(i) }}>{ini(s.name)}</span>
               <span className="who"><b>{i === view.you ? `${s.name} (you)` : s.name}</b>
                 <span className="badges">{s.isAdmin && <span className="badge">Admin</span>}{s.isDealer && <span className="badge deal">Deals game 1</span>}{!s.connected && <span className="badge">Offline</span>}</span></span>
               <span className="ready ok num">{fmt(s.coins)}</span>
@@ -626,7 +630,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
           ? <button className={`icon-btn${view.callOff ? ' on' : ''}`} aria-label="Admin controls" onClick={() => { play('tap'); onSheet('admin'); }}><Icon name="crown" /></button>
           : <button className="icon-btn" aria-label="Settings" onClick={onSettings}><Icon name="sliders" /></button>}
       </div>
-      <div id="table-area" ref={area}>
+      <div id="table-area" ref={area} className={n > 7 ? 'many' : undefined}>
         <div className="felt" />
         <div className="center">
           <div id="deck" role="button" aria-label={o.deal ? 'Tap to deal' : 'Deck'} className={o.deal ? 'pulse' : ''} onClick={() => { if (o.deal) { client.send({ t: 'deal' }); buzz(HAP.click); } }}>
@@ -648,7 +652,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
             <div key={i} className={cls} data-seat={i} style={{ left: `${pos.x}%`, top: `${pos.y}%` }}>
               <div className="av-wrap">
                 <svg className="ring" viewBox="0 0 60 60"><circle className="bg" cx="30" cy="30" r="28" /><circle className="fg" cx="30" cy="30" r="28" /></svg>
-                <button className="av" style={{ background: COLORS[i % 7] }} aria-label={`${s.name}: throw something`} onClick={() => { play('tap'); buzz(HAP.tick); onReact(i); }}>{ini(s.name)}</button>
+                <button className="av" style={{ background: colorOf(i) }} aria-label={`${s.name}: throw something`} onClick={() => { play('tap'); buzz(HAP.tick); onReact(i); }}>{ini(s.name)}</button>
                 <span className={`dot${s.connected ? '' : ' amber'}`} />
                 <div className="bubble" />
                 <div className="minis">{(cardsVisible || dealing) && s.status !== 'eliminated' && Array.from({ length: dealing ? Math.min(s.cardCount, landed) : s.cardCount }, (_, c) => <div key={c} className="mini back" />)}</div>
@@ -889,7 +893,7 @@ function ResultSheet({ open, view, client, verify, onVerify }: { open: boolean; 
   return (
     <div className={`sheet${open ? ' on' : ''}`} id="result" role="dialog" aria-label="Game result">
       <div className="grab" />
-      <div className="res-top"><div className="lav" style={{ background: COLORS[r.winner % 7] }}>{ini(r.winnerName)}</div>
+      <div className="res-top"><div className="lav" style={{ background: colorOf(r.winner) }}>{ini(r.winnerName)}</div>
         <div><b>{r.winner === view.you ? 'You win' : `${r.winnerName} wins`} {fmt(r.pot)}</b><span>{sub} · {kind}</span></div></div>
       {r.bonus && (
         <div className="bonus-line"><b>{r.bonus.kind === 'quad' ? 'Four of a Kind' : 'Three of a Kind'} bonus</b>

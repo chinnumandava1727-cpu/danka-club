@@ -9,7 +9,7 @@ import {
   viewFor, barPosition, cutterSeat, type Card, type State,
 } from '../src';
 
-const NAMES = ['Rc', 'Srinu', 'Ravi', 'Kiran', 'Babji', 'Prasad', 'Naidu'];
+const NAMES = ['Rc', 'Srinu', 'Ravi', 'Kiran', 'Babji', 'Prasad', 'Naidu', 'Suresh', 'Venky', 'Murali'];
 const uid = (i: number) => `u${i}`;
 let now = 1_700_000_000_000;
 beforeEach(() => { now = 1_700_000_000_000; });
@@ -65,10 +65,19 @@ const a = (st: State, seat: number, type: 'see' | 'blind' | 'seen' | 'pack' | 's
 const conserved = (st: State, n: number) => st.players.reduce((s, p) => s + p.coins - p.loan, 0) + st.pot === n * 100;
 
 describe('rooms (tests 1, 3, 27, 31, 33)', () => {
-  it('1. creates a room, joins by code, refuses an 8th player', () => {
-    const st = room(7);
-    expect(st.players).toHaveLength(7);
-    expectCode(() => join(st, 'u8', 'Eighth', now), 'room_full');
+  it('1. creates a room, joins by code, seats up to 10 and refuses an 11th player', () => {
+    const st = room(10);
+    expect(st.players).toHaveLength(10);
+    expectCode(() => join(st, 'u10', 'Eleventh', now), 'room_full');
+  });
+
+  it('10 players: a Well Cut deals 4 cards each (40 of the 52) round by round', async () => {
+    const st = room(10);
+    startRound(st, uid(0), now);
+    await shuffleIn(st);
+    cutWell(st);
+    expect(st.players.every((p) => p.cards.length === 4)).toBe(true);
+    expect(new Set(st.players.flatMap((p) => p.cards.map(cardCode))).size).toBe(40);
   });
 
   it('23. every player starts with 100 coins, recorded in the ledger', () => {
@@ -522,8 +531,8 @@ describe('timer switch and games with 2–7 players (tests 2, 32)', () => {
     expectCode(() => setTimer(st, uid(1), false, now), 'not_admin');
   });
 
-  it('2. full random games with 2 to 7 players never create or lose coins', async () => {
-    for (let n = 2; n <= 7; n++) {
+  it('2. full random games with 2 to 10 players never create or lose coins', async () => {
+    for (let n = 2; n <= 10; n++) {
       const st = room(n);
       startRound(st, uid(0), now);
       for (let g = 0; g < 25; g++) {

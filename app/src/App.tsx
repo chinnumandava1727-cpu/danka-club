@@ -92,7 +92,7 @@ function NameScreen({ onDone }: { onDone: (name: string) => void }) {
       <div className="logo" style={{ marginTop: 40 }}>
         <Logo />
         <h1>DANKA CLUB</h1>
-        <p>Your table. Your seven.</p>
+        <p>Your table. Your people.</p>
       </div>
       <div className="join-body">
         <label htmlFor="name-input" className="field-label">Your name at the table</label>
@@ -115,7 +115,7 @@ function Home(p: { me: Me; busy: boolean; onCreate: (seats: number) => void; onJ
         <button className="chip-tag" onClick={p.onRename}>Playing as <b>{p.me.name}</b> · change</button>
         <button className="icon-btn" aria-label="Settings" onClick={p.onSettings}><Icon name="gear" /></button>
       </div>
-      <div className="logo"><Logo /><h1>DANKA CLUB</h1><p>Your table. Your seven.</p></div>
+      <div className="logo"><Logo /><h1>DANKA CLUB</h1><p>Your table. Your people.</p></div>
       <div className="tiles">
         <button className="tile primary" onClick={() => { play('tap'); buzz(HAP.tick); setSizeOpen(true); }} disabled={p.busy}>
           <span className="t-ic"><Icon name="plus" /></span>
@@ -139,7 +139,7 @@ function Home(p: { me: Me; busy: boolean; onCreate: (seats: number) => void; onJ
         <div className="sheet-body">
           <p className="note" style={{ margin: '0 0 12px' }}>The room holds this many seats. You can change it in the waiting room. Latecomers join at Placecut, between rounds.</p>
           <div className="size-grid">
-            {[2, 3, 4, 5, 6, 7].map((n) => (
+            {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
               <button key={n} className={`size-btn${n === last ? ' on' : ''}`} disabled={p.busy} onClick={() => { setSizeOpen(false); p.onCreate(n); }}>
                 <b>{n}</b><span className="seats-dots">{Array.from({ length: n }, (_, i) => <i key={i} />)}</span><small>players</small>
               </button>

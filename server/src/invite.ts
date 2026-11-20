@@ -10,7 +10,7 @@ export function invitePage(code: string | null): string {
     : `<p class="lead">This invite link isn't valid. Ask your friend to share the room code again.</p>`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title}</title>
-<meta property="og:title" content="${title}"><meta property="og:description" content="Private 7-player table. Coins have no cash value.">
+<meta property="og:title" content="${title}"><meta property="og:description" content="Private table for 2–10 players. Coins have no cash value.">
 <style>
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0B1220;color:#F5EFE3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:360px;padding:32px 24px;text-align:center}

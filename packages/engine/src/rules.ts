@@ -44,7 +44,7 @@ export interface DankaRules {
 
 export const DANKA_RULES: Readonly<DankaRules> = Object.freeze({
   minPlayers: 2,
-  maxPlayers: 7,
+  maxPlayers: 10,
   startingCoins: 100,
   maxLoan: 100,
   blindCost: 1,
@@ -64,4 +64,4 @@ export const DANKA_RULES: Readonly<DankaRules> = Object.freeze({
   cutBarLeadMs: 1200,
 });
 
-export const MAX_SEATS = 7;
+export const MAX_SEATS = 10;

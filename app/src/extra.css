@@ -150,3 +150,14 @@ button.chip-tag b{color:var(--ivory)}
 .deal-round{display:inline-block; padding:3px 10px; border-radius:999px; background:rgba(6,10,18,.75); border:1px solid rgba(244,163,0,.6); color:var(--marigold); font:800 12px var(--display); letter-spacing:.04em; animation:drIn .3s cubic-bezier(.2,1.5,.4,1)}
 @keyframes drIn{from{transform:scale(.6); opacity:0}}
 .abtns.locked{pointer-events:none; opacity:.4; filter:saturate(.5)}
+
+/* 8–10 players: slightly smaller seats so everyone fits around the table */
+#table-area.many .seat{width:72px}
+#table-area.many .av-wrap{width:46px; height:46px}
+#table-area.many .av{width:38px; height:38px; font-size:13px}
+#table-area.many .nm{font-size:11px; max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#table-area.many .co{font-size:12px}
+#table-area.many .tag{transform:scale(.88)}
+#table-area.many .seat.sl .minis{left:52px} #table-area.many .seat.sr .minis{right:52px}
+#table-area.many .mini{width:16px; height:23px; margin-left:-8px}
+.size-btn .seats-dots{flex-wrap:wrap; justify-content:center; max-width:70px}

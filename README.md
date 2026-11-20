@@ -14,7 +14,7 @@ The game follows the group's own rules document (DANKA CLUB Complete Game Rules,
 no Chaal, no Raise, no boot, no extra modes. The values live in `packages/engine/src/rules.ts` (`DANKA_RULES`);
 the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packages/engine/src/hands.ts`.
 
-- 2–7 players. The first to enter is admin and deals game 1; every winner deals the next game (Well Cut games included).
+- 2–10 players. The first to enter is admin and deals game 1; every winner deals the next game (Well Cut games included).
 - 100 coins each. Bank loans up to 100 per player in total, recorded as owed. Lose all 200 and you sit out until Placecut, then leave.
 - Blind costs 1, Seen costs 2. Seeing your cards makes you Seen. Pack any time on your turn.
 - Show only when two players remain, priced automatically (Blind 1, Seen 2). A Blind player can't Show against another Blind player.
