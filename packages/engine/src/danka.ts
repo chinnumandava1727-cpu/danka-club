@@ -173,7 +173,7 @@ export type GameEvent =
   | { e: 'round'; round: number; endsAt: number }
   | { e: 'game'; game: number; cardsEach: number; wellCutGame: number | null }
   | { e: 'commit'; hash: string }
-  | { e: 'cut'; pos: number; off: number; players: number; wellCut: boolean; auto: boolean }
+  | { e: 'cut'; seat: number; pos: number; off: number; players: number; wellCut: boolean; auto: boolean }
   | { e: 'deal'; dealer: number; order: number[]; cardsEach: number; auto: boolean }
   | { e: 'turn'; seat: number }
   | { e: 'see'; seat: number; auto: boolean }
@@ -505,6 +505,14 @@ export function barPosition(bar: CutBar, at: number): number {
   return i % 2 ? 1 - e : e;
 }
 
+/**
+ * §4/§5 The player on the dealer's left (the next active player clockwise) stops the Well Cut slider.
+ * The dealer only deals.
+ */
+export function cutterSeat(st: State): number {
+  return dealOrder(st)[0] ?? dealerIndex(st);
+}
+
 /** Clockwise from the dealer's left, skipping folded/eliminated players. */
 export function dealOrder(st: State): number[] {
   const n = st.players.length, d = dealerIndex(st), order: number[] = [];
@@ -529,7 +537,7 @@ function lockCards(st: State) {
  */
 export function cut(st: State, uid: string | null, at: number, now: number): GameEvent[] {
   if (st.phase !== 'cutting') fail('not_cutting', 'There is nothing to cut right now.');
-  if (uid !== null && uid !== st.dealerUid) fail('not_dealer', 'Only the dealer cuts.');
+  if (uid !== null && seatOf(st, uid) !== cutterSeat(st)) fail('not_cutter', 'The player on the dealer’s left cuts.');
   const bar = st.cutBar ?? makeCutBar(st.rules, now);
   const pos = barPosition(bar, at);
   const off = Math.round(Math.abs(pos - 0.5) * 10000) / 100;
@@ -545,7 +553,7 @@ export function cut(st: State, uid: string | null, at: number, now: number): Gam
   lockCards(st);
   st.phase = 'dealing';
   st.deadline = st.timerOn ? { kind: 'deal', at: now + st.rules.turnSeconds * 1000 } : null;
-  return [{ e: 'cut', pos, off, players, wellCut, auto: uid === null }];
+  return [{ e: 'cut', seat: cutterSeat(st), pos, off, players, wellCut, auto: uid === null }];
 }
 
 /** The dealer distributes the locked cards. Pass uid null for the automatic deal (timer on). */
@@ -861,6 +869,8 @@ export interface PlayerView {
   game: number;
   roundGames: number;
   dealer: number;
+  /** Who stops the Well Cut slider: the player on the dealer's left. */
+  cutter: number;
   turn: number;
   pot: number;
   cardsEach: number;
@@ -914,7 +924,7 @@ export function viewFor(st: State, uid: string): PlayerView {
   return {
     phase: st.phase, you: me, isAdmin, round: st.round, roundEndsAt: st.roundEndsAt, callOff: st.callOff, timerOn: st.timerOn,
     tableSize: st.tableSize, minPlayers: st.rules.minPlayers, maxPlayers: st.rules.maxPlayers,
-    game: st.game, roundGames: st.roundGames, dealer: d, turn: st.turn, pot: st.pot, cardsEach: st.cardsEach,
+    game: st.game, roundGames: st.roundGames, dealer: d, cutter: cutterSeat(st), turn: st.turn, pot: st.pot, cardsEach: st.cardsEach,
     wellCut: { active: st.wellCut.active, game: wellCutGameNo(st), sequence: st.rules.wellCutSequence },
     wellCutCount: st.wellCutCount, wellCutsThisRound: st.wellCutsThisRound,
     lastCut: st.phase === 'cutting' ? null : st.lastCut,
@@ -939,7 +949,7 @@ export function viewFor(st: State, uid: string): PlayerView {
       pack: myTurn,
       show,
       sideshow,
-      cut: st.phase === 'cutting' && mine?.uid === st.dealerUid,
+      cut: st.phase === 'cutting' && me >= 0 && me === cutterSeat(st),
       deal: st.phase === 'dealing' && mine?.uid === st.dealerUid,
       loan: mine && mine.status !== 'eliminated' && st.phase !== 'ended' && loanLeft(st, me) > 0 ? { left: loanLeft(st, me), needed } : null,
       startRound: isAdmin && between && st.players.filter((p) => p.status !== 'eliminated').length >= st.rules.minPlayers,

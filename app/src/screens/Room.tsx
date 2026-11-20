@@ -582,6 +582,7 @@ function Table({ view, code, client, quality, dealing, frozen, onSheet, onReact,
   const clock = view.wellCut.active && left <= 0 ? 'Well Cut finishing' : left > 0 ? mmss(left) : 'Last game';
   const dl = view.deadline && view.deadline.kind !== 'next_game' ? Math.max(0, Math.ceil((view.deadline.at - now) / 1000)) : null;
   const dealerName = view.players[view.dealer]?.name ?? '';
+  const cutterName = view.players[view.cutter]?.name ?? '';
   const turnP = view.players[view.turn];
   const loanNeed = o.loan?.needed ?? 0;
   const xb = me?.extraBlindsLeft;
@@ -589,7 +590,7 @@ function Table({ view, code, client, quality, dealing, frozen, onSheet, onReact,
 
   const status =
     view.phase === 'shuffling' ? 'Shuffling a fresh deck…'
-    : view.phase === 'cutting' ? (o.cut ? `You cut. Tap STOP when the slider is on the gold line${dl !== null ? ` · ${dl}` : ''}.` : `${dealerName} is cutting. Stopping on the gold line is a Well Cut.`)
+    : view.phase === 'cutting' ? (o.cut ? `You cut for ${dealerName}. Tap STOP when the slider is on the gold line${dl !== null ? ` · ${dl}` : ''}.` : `${cutterName} is cutting for ${dealerName}. The gold line is a Well Cut.`)
     : view.phase === 'dealing' ? (o.deal ? `Tap the deck to deal ${view.cardsEach} card${view.cardsEach === 1 ? '' : 's'} each${dl !== null ? ` · ${dl}` : ''}.` : `${dealerName} is dealing`)
     : view.phase === 'betting' ? (
       !me ? ''
@@ -649,7 +650,7 @@ function Table({ view, code, client, quality, dealing, frozen, onSheet, onReact,
         })}
         <div id="dealer-btn" ref={dealerBtn}>D</div>
         {(view.cutBar || frozen) && (
-          <CutBarPanel bar={view.cutBar} frozen={frozen} isDealer={!!o.cut} dealerName={dealerName} serverNow={client.serverNow}
+          <CutBarPanel bar={view.cutBar} frozen={frozen} isCutter={!!o.cut} cutterName={cutterName} dealerName={dealerName} serverNow={client.serverNow}
             onStop={() => { client.send({ t: 'cut', at: client.serverNow() }); }} />
         )}
       </div>
@@ -703,9 +704,10 @@ function Tag({ s }: { s: PlayerView['players'][number] }) {
 }
 
 /* ---------- §5 the Well Cut timing bar: the same slider on every phone; only the dealer can stop it ---------- */
-function CutBarPanel({ bar, frozen, isDealer, dealerName, serverNow, onStop }: {
-  bar: CutBar | null; frozen: Frozen; isDealer: boolean; dealerName: string; serverNow: () => number; onStop: () => void;
+function CutBarPanel({ bar, frozen, isCutter, cutterName, dealerName, serverNow, onStop }: {
+  bar: CutBar | null; frozen: Frozen; isCutter: boolean; cutterName: string; dealerName: string; serverNow: () => number; onStop: () => void;
 }) {
+  const isDealer = isCutter; // the player on the dealer's left stops the slider (rules §4/§5)
   const needle = useRef<HTMLDivElement>(null);
   const [stoppedAt, setStoppedAt] = useState<number | null>(null);
   const [ready, setReady] = useState(true);
@@ -757,10 +759,10 @@ function CutBarPanel({ bar, frozen, isDealer, dealerName, serverNow, onStop }: {
   const zone = frozen?.zone ?? bar?.zone ?? 1.5;
   const title = frozen
     ? (frozen.wellCut ? (frozen.off <= 0.4 ? 'PERFECT!' : 'WELL CUT!') : frozen.off - zone < 2 ? 'SO CLOSE!' : 'NO WELL CUT')
-    : stoppedAt !== null ? 'STOPPED…' : ready ? 'GET READY' : isDealer ? 'STOP ON THE LINE' : `${dealerName.toUpperCase()} IS CUTTING`;
+    : stoppedAt !== null ? 'STOPPED…' : ready ? 'GET READY' : isDealer ? 'STOP ON THE LINE' : `${cutterName.toUpperCase()} IS CUTTING`;
   const sub = frozen
-    ? (frozen.wellCut ? '4 games: 4, 3, 2, 1 cards' : `Missed by ${(frozen.off - zone).toFixed(1)}% · normal game${frozen.auto ? ' (timer)' : ''}`)
-    : isDealer ? 'Tap STOP or the bar' : 'Gold line = Well Cut';
+    ? (frozen.wellCut ? `4 games: 4, 3, 2, 1 cards · ${dealerName} deals` : `Missed by ${(frozen.off - zone).toFixed(1)}% · ${dealerName} deals${frozen.auto ? ' (timer)' : ''}`)
+    : isDealer ? `You cut for ${dealerName}` : `Then ${dealerName} deals`;
 
   return (
     <div className={`cutbar-panel${frozen ? (frozen.wellCut ? ' won' : ' missed') : ''}`} role="group" aria-label="Well Cut timing bar"
