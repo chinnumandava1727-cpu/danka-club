@@ -26,8 +26,11 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   1 cards. The slider is fastest through the middle, changes speed every pass (crypto random) and speeds up, so it
   can't be learned: about 3–5 Well Cuts per 80 games. The server accepts a stop time only from the last 0.25 s before
   the tap arrived. The round clock never interrupts a Well Cut.
-- Ranking: 3-card Teen Patti order; 2-card (pair beats no pair); 1-card (highest card); 4-card (Four of a Kind highest).
-  Suits break every tie: Spades > Hearts > Diamonds > Clubs, so there is never a draw.
+- Ranking follows the group's Local Card Rules (`packages/engine/src/hands.ts`):
+  3 cards Trail > Pure Sequence > Sequence > Colour > Pair > High; 2 cards Pair (22 highest, then AA) > Pure Sequence >
+  Sequence > Colour > High; 4 cards Four of a Kind highest (rest adapted, awaiting confirmation); 1 card highest card.
+  A Sequence needs every card in a different suit; Colour needs every card in one suit. Ties: sort highest first,
+  compare values, then suits card by card (Spades > Hearts > Diamonds > Clubs), so there is never a draw.
 - Bonus N×(N−1), only when the holder wins the game: Three of a Kind in normal 3-card games, Four of a Kind in Well Cut game 1.
 - 20-minute rounds. When the clock runs out, the current game finishes, then **Placecut**: scorecard for everyone,
   new players may join, anyone may leave, admin starts the next round. Balances and loans carry forward.
