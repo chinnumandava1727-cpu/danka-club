@@ -1,0 +1,100 @@
+/* ============ Sideways "Classic Casino" table ============
+   #app.land is a fixed 430px-tall frame (width 840–980) scaled to the screen by lib/landscape.ts,
+   turned 90° when the phone is upright. Everything here is in those design pixels. */
+#app.land{position:fixed; left:0; top:0; overflow:clip; max-width:none; margin:0; border:0; border-radius:0; box-shadow:none; transform-origin:0 0;
+  background:radial-gradient(70% 90% at 50% 35%, #2C2618 0%, #14110B 58%, #070604 100%)}
+#app.land #table{background:transparent}
+
+/* rail, wood racetrack and baize */
+.land #table-area{position:absolute; inset:0; flex:none}
+.land .rail{position:absolute; left:92px; right:92px; top:67px; height:250px; border-radius:125px;
+  background:radial-gradient(120% 140% at 50% 20%, #3A3A3E, #161618 55%, #0A0A0B);
+  box-shadow:0 26px 55px rgba(0,0,0,.75), inset 0 2px 1px rgba(255,255,255,.18), inset 0 -4px 8px rgba(0,0,0,.6)}
+.land .rail::before{content:''; position:absolute; inset:5px; border-radius:inherit; border:1.5px dashed rgba(255,255,255,.12)}
+.land .rail::after{content:''; position:absolute; inset:12px; border-radius:113px; border:7px solid; border-color:#9A6232 #6B3F1F #4E2C14 #6B3F1F; box-shadow:inset 0 0 0 1px rgba(0,0,0,.5), 0 0 0 1px rgba(0,0,0,.6)}
+#app.land .felt{position:absolute; inset:auto; left:111px; right:111px; top:86px; height:212px; border-radius:106px; overflow:hidden;
+  background:radial-gradient(75% 110% at 50% 30%, #2E9152 0%, #1D6738 45%, #0F3F21 100%); box-shadow:inset 0 0 45px rgba(0,0,0,.6)}
+#app.land .felt::before{inset:22px; border-radius:84px; border:2px solid rgba(255,214,120,.35)}
+#app.land .felt::after{display:none}
+.land .felt-logo{display:none; position:absolute; left:50%; top:88%; transform:translate(-50%,-50%); font:800 20px var(--display); letter-spacing:.32em; color:rgba(255,214,120,.16); white-space:nowrap}
+:root[data-table="maroon"] #app.land .felt{background:radial-gradient(75% 110% at 50% 30%, #8A2A3A 0%, #5A1E2A 45%, #3B111B 100%)}
+
+/* top bar: room on the left, clock and tools on the right */
+#app.land .topbar{position:absolute; left:0; right:0; top:0; height:52px; padding:10px 12px; background:none; z-index:20; pointer-events:none}
+#app.land .topbar > *{pointer-events:auto}
+#app.land .topbar .icon-btn{width:36px; height:36px; border-radius:11px; background:rgba(18,28,46,.85); border:1px solid rgba(255,255,255,.08)}
+#app.land .room-chip{font-size:14px; background:rgba(18,28,46,.85)}
+#app.land .topbar .signal{margin-left:auto}
+#app.land .center .hand-no{order:9; margin:0; display:flex; align-items:center; gap:5px; padding:2px 10px; border-radius:999px; background:rgba(5,9,16,.5); font-size:11px; color:rgba(245,239,227,.8); font-weight:700}
+
+/* centre: deck and pot side by side, then stake and status */
+#app.land .center{left:50%; top:202px; gap:5px; z-index:4}
+.land .pot-row{display:flex; align-items:center; gap:12px}
+#app.land #deck{width:40px; height:56px}
+#app.land .pot{flex-direction:row; gap:8px; padding:4px 14px 4px 12px; background:rgba(5,9,16,.72); border-color:rgba(226,184,101,.55); box-shadow:0 4px 14px rgba(0,0,0,.4)}
+#app.land .pot b{font-size:21px}
+#app.land .stake{font-size:10.5px}
+#app.land .stake .fp{font-size:10px}
+#app.land .deal-prompt{min-height:0; font-size:12px}
+#app.land .deal-prompt:empty{display:none}
+#app.land .status-line{max-width:340px; padding:4px 12px; border-radius:999px; background:rgba(5,9,16,.66); color:var(--ivory); font-size:11.5px; font-weight:700; line-height:1.35; text-align:center}
+#app.land .status-line:empty{display:none}
+#app.land .status-line.mine{color:#1A1206; background:linear-gradient(135deg,#FFC64D,#F4A300)}
+
+/* seats on the rail */
+#app.land .seat{width:96px; gap:0; z-index:6}
+#app.land .av-wrap{width:54px; height:54px}
+#app.land .av{width:46px; height:46px; font-size:15px; border:2.5px solid rgba(255,255,255,.9); box-shadow:0 4px 10px rgba(0,0,0,.55)}
+.land .plate{margin-top:3px; min-width:86px; padding:2px 8px 3px; border-radius:10px; text-align:center; background:linear-gradient(180deg,#1C1C1F,#0B0B0C); border:1px solid rgba(226,184,101,.55)}
+#app.land .seat .nm{font-size:11.5px; max-width:84px; margin:0 auto}
+#app.land .seat .co{font-size:13px}
+#app.land .seat .tag{position:absolute; top:-8px; left:50%; transform:translateX(-50%); z-index:3; white-space:nowrap; font-size:9px; padding:1px 6px}
+#app.land .seat.turn .plate{border-color:var(--marigold); box-shadow:0 0 12px rgba(244,163,0,.45)}
+#app.land .seat .minis{top:10px; height:28px}
+#app.land .seat.sl .minis{left:72px; right:auto} #app.land .seat.sr .minis{right:72px; left:auto}
+#app.land .mini{width:19px; height:27px}
+#app.land #table-area.many .seat{width:84px}
+#app.land #table-area.many .av-wrap{width:46px; height:46px}
+#app.land #table-area.many .av{width:40px; height:40px; font-size:13px}
+#app.land #table-area.many .plate{min-width:76px}
+#app.land #table-area.many .seat.sl .minis{left:62px} #app.land #table-area.many .seat.sr .minis{right:62px}
+
+/* coins each player has put in this game, poker style */
+.land .pile-at{position:absolute; transform:translate(-50%,-50%); display:flex; align-items:center; gap:4px; z-index:5; pointer-events:none; min-width:4px; min-height:4px}
+.land .pile{position:relative; width:20px; height:26px}
+.land .pile i{position:absolute; left:0; width:20px; height:8px; border-radius:50%; border:1px solid rgba(255,255,255,.85); box-shadow:0 1px 0 rgba(0,0,0,.5)}
+.land .pile i:nth-child(3n+1){background:#C8102E} .land .pile i:nth-child(3n+2){background:#1F5FBF} .land .pile i:nth-child(3n){background:#E2B865}
+.land .pile-at b{font:800 12px var(--display); padding:1px 7px; border-radius:8px; background:rgba(0,0,0,.6); color:#FFF1C9}
+
+/* you: avatar and coins left of your cards, cards bottom centre */
+#app.land .me{position:absolute; inset:0; height:auto; padding:0; display:block; pointer-events:none; z-index:8}
+#app.land .me > *{pointer-events:auto}
+#app.land .me-left{left:auto; right:calc(50% + 104px); bottom:14px; width:auto; flex-direction:row; align-items:center; gap:8px}
+#app.land .me-left .av-wrap{width:62px; height:62px}
+#app.land .me-left .av{width:52px; height:52px; font-size:17px}
+.land .me-info{display:flex; flex-direction:column; align-items:flex-start; gap:2px}
+.land .me-info b{font-size:12.5px; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#app.land .me-info .co{font-size:18px}
+.land .me-cards{position:absolute; left:50%; bottom:0; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center}
+#app.land .hand-name{font-size:14px; color:var(--marigold); text-shadow:0 2px 6px #000; min-height:18px; white-space:nowrap}
+#app.land #my-cards{height:116px}
+#app.land .bank-btn{position:absolute; left:12px; bottom:12px; z-index:20; height:52px; min-width:64px; flex-direction:column; justify-content:center; gap:1px; border-radius:14px; font:800 13px var(--display); padding:0 10px}
+#app.land .bank-btn svg{width:18px; height:18px}
+
+/* action buttons bottom right */
+#app.land .actions{position:absolute; right:12px; bottom:12px; padding:0; background:none; border:0; z-index:20}
+#app.land .abtns{gap:7px}
+#app.land .ab{flex:none; min-width:74px; height:56px; padding:0 10px; border-radius:14px; font-size:15px}
+#app.land .ab.chaal{min-width:108px}
+#app.land .ab.cut-stop{min-width:180px; height:60px}
+#app.land #dealer-btn{z-index:7}
+
+/* the Well Cut timing bar, sheets and overlays inside the sideways frame */
+#app.land .cutbar-panel{top:200px}
+#app.land .cb-bar{height:230px}
+#app.land .sheet{left:auto; right:0; top:0; bottom:0; width:min(460px, 54%); max-height:none; border-radius:22px 0 0 22px; border-top:0; border-left:1px solid var(--line);
+  transform:translateX(105%); overflow-y:auto; padding-top:10px}
+#app.land .sheet.on{transform:none}
+#app.land .sheet .grab{display:none}
+#app.land .status-banner{left:50%; right:auto; width:440px; transform:translateX(-50%); top:56px}
+#app.land #toast{top:56px}

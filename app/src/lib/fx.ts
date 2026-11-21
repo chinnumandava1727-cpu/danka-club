@@ -1,15 +1,15 @@
 // Imperative animation layer: chips, flying cards, throwables and bursts drawn above the table.
 import { settings } from './settings';
+import { toLocal } from './landscape';
 
-const app = () => document.getElementById('app')!;
 const layer = () => document.getElementById('fx')!;
 
 export interface Pt { x: number; y: number }
 
 export function centerOf(el: Element | null): Pt | null {
   if (!el) return null;
-  const a = app().getBoundingClientRect(), r = el.getBoundingClientRect();
-  return { x: r.left - a.left + r.width / 2, y: r.top - a.top + r.height / 2 };
+  const r = el.getBoundingClientRect();
+  return toLocal(r.left + r.width / 2, r.top + r.height / 2);
 }
 
 export const seatAvatar = (seat: number) => document.querySelector(`[data-seat="${seat}"] .av`);

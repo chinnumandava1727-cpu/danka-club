@@ -1061,6 +1061,8 @@ export interface PlayerView {
     /** Owed to other players / owed by other players (player loans). */
     owes: number;
     owed: number;
+    /** Coins this player has put into the current pot. */
+    put: number;
   }[];
   /** Outstanding player loans (everyone can see who owes whom). */
   p2p: P2PLoan[];
@@ -1127,7 +1129,7 @@ export function viewFor(st: State, uid: string): PlayerView {
       cardCount: p.cards.length, cards: i === me || shown.includes(i) ? p.cards.map(cardCode) : null,
       isAdmin: p.uid === st.adminUid, isDealer: i === d,
       extraBlindsLeft: st.phase === 'betting' && onlyBlindLeft(st, i) ? Math.max(0, st.rules.extraBlindActions - p.extraBlinds) : null,
-      owes: owesPlayers(st, p.uid), owed: owedByPlayers(st, p.uid),
+      owes: owesPlayers(st, p.uid), owed: owedByPlayers(st, p.uid), put: p.contributed,
     })),
     p2p: st.p2p,
     myRequest: myReq ? { id: myReq.id, to: seatOf(st, myReq.to), amount: myReq.amount } : null,

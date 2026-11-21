@@ -10,24 +10,30 @@ import { CardFace } from '../lib/cards';
 import { deliverPdf, settlementPdf } from '../lib/pdf';
 import type { ToastFn } from '../App';
 import { Icon } from './Icon';
+import { toLocal, useLandscape } from '../lib/landscape';
 
 const COLORS = ['#F4A300', '#81B29A', '#E07A5F', '#F2CC8F', '#B8A1D9', '#6FB7E0', '#E9A6A6', '#9FD3C7', '#D9A5F2', '#C9D97A'];
 const colorOf = (i: number) => COLORS[i % COLORS.length];
-// Where the other players sit around the felt, clockwise from your left (you are always bottom-centre).
+// The table is laid out sideways (design height 430). Other players sit around the rail of an oval
+// poker table, clockwise from your left; you sit at the bottom centre.
 type Pos = { x: number; y: number; s: 'sl' | 'sr' };
-const L = (x: number, y: number): Pos => ({ x, y, s: x <= 50 ? 'sl' : 'sr' });
-const LAYOUTS: Record<number, Pos[]> = {
-  1: [L(50, 13)],
-  2: [L(24, 15), L(76, 15)],
-  3: [L(9, 44), L(50, 13), L(91, 44)],
-  4: [L(9, 44), L(24, 15), L(76, 15), L(91, 44)],
-  5: [L(13, 71), L(9, 44), L(50, 13), L(91, 44), L(87, 71)],
-  6: [L(13, 71), L(9, 44), L(24, 15), L(76, 15), L(91, 44), L(87, 71)],
-  7: [L(13, 75), L(8, 51), L(15, 26), L(50, 10), L(85, 26), L(92, 51), L(87, 75)],
-  8: [L(13, 77), L(8, 55), L(11, 32), L(33, 11), L(67, 11), L(89, 32), L(92, 55), L(87, 77)],
-  9: [L(14, 80), L(8, 61), L(9, 40), L(20, 18), L(50, 9), L(80, 18), L(91, 40), L(92, 61), L(86, 80)],
+const CY = 192, RY = 150;
+const posFor = (k: number, n: number, W: number): Pos | undefined => {
+  if (k < 1 || k >= n) return undefined;
+  // Seats are spaced evenly along the rail (a stadium shape): up the left end, across the top, down the right end.
+  const cx = W / 2, hs = W / 2 - 62 - RY, arc = (RY * 2 * Math.PI) / 3, total = 2 * arc + 2 * hs;
+  let d = (total * (k - 0.5)) / (n - 1), x: number, y: number;
+  if (d < arc) { const a = Math.PI * (150 / 180) + d / RY; x = cx - hs + RY * Math.cos(a); y = CY + RY * Math.sin(a); }
+  else if ((d -= arc) < 2 * hs) { x = cx - hs + d; y = CY - RY; }
+  else { const a = -Math.PI / 2 + (d - 2 * hs) / RY; x = cx + hs + RY * Math.cos(a); y = CY + RY * Math.sin(a); }
+  return { x, y: Math.max(60, y), s: x <= cx + 1 ? 'sl' : 'sr' };
 };
-const posFor = (k: number, n: number): Pos | undefined => LAYOUTS[n - 1]?.[k - 1];
+/** A point `f` of the way from a seat toward the middle of the table (clamped to lo..hi pixels). */
+const toward = (p: { x: number; y: number }, W: number, f: number, lo: number, hi: number) => {
+  const dx = W / 2 - p.x, dy = CY - p.y, L = Math.hypot(dx, dy) || 1, d = Math.min(hi, Math.max(lo, L * f));
+  return { x: p.x + (dx / L) * d, y: p.y + (dy / L) * d };
+};
+const pileHTML = (v: number) => Array.from({ length: Math.min(7, Math.ceil(v / 2)) }, (_, k) => <i key={k} style={{ bottom: k * 3 }} />);
 const ini = (name: string) => name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '?';
 const fmt = (n: number) => n.toLocaleString('en-IN');
 const sgn = (n: number) => (n > 0 ? `+${fmt(n)}` : fmt(n));
@@ -210,7 +216,7 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
           else if (e.auto) { play('creak'); buzz(HAP.peek); toast('Your 3 extra Blinds are used up, so your cards are shown'); }
           break;
         case 'bet':
-          chip(centerOf(seatAvatar(e.seat)), centerOf(potEl()));
+          chip(centerOf(seatAvatar(e.seat)), centerOf(document.querySelector(`[data-pile="${e.seat}"]`) ?? potEl()));
           play('clink', e.amount);
           bubble(e.seat, `${BET_LABEL[e.kind]} ${e.amount}`);
           if (e.seat === you) buzz(HAP.click);
@@ -613,23 +619,21 @@ function AdminSheet({ open, view, client, exporting, onExport, onClose }: { open
 
 function Table({ view, code, client, quality, dealing, dealRound, landed, frozen, onSheet, onReact, onSettings }: { view: PlayerView; code: string; client: RoomClient; quality: { q: Quality; rtt: number }; dealing: boolean; dealRound: { r: number; of: number } | null; landed: number; frozen: Frozen; onSheet: (s: Sheet) => void; onReact: (seat: number) => void; onSettings: () => void }) {
   useTicker(1000);
+  const W = useLandscape();
   const you = view.you, n = view.players.length;
   const me = view.players[you];
   const cardsVisible = (view.phase === 'betting' || view.phase === 'game_over') && !dealing;
   const o = view.options;
-  const dealerBtn = useRef<HTMLDivElement>(null);
-  const area = useRef<HTMLDivElement>(null);
   const now = client.serverNow();
-
-  // slide the dealer button next to the dealer
-  useLayoutEffect(() => {
-    const d = dealerBtn.current, a = area.current?.getBoundingClientRect(), av = document.querySelector(`[data-seat="${view.dealer}"] .av`)?.getBoundingClientRect();
-    if (!d || !a || !av) return;
-    let x = av.left - a.left + av.width / 2, y = av.top - a.top + av.height / 2;
-    const k = (view.dealer - you + n) % n;
-    if (k === 0) { x += 34; y -= 30; } else if (posFor(k, n)?.s !== 'sr') { x += 30; y += 22; } else { x -= 30; y += 22; }
-    d.style.left = `${x}px`; d.style.top = `${y}px`;
-  }, [view.dealer, you, n]);
+  const seatPos = (i: number) => posFor((i - you + n) % n, n, W);
+  const pilePos = (i: number) => { if (i === you) return { x: W / 2 - 96, y: 286 }; const p = seatPos(i); return p ? toward(p, W, 0.45, 62, 150) : null; };
+  // the dealer button sits just inside the dealer's seat
+  const dealerAt = (() => {
+    if (view.dealer === you) return { x: W / 2 - 150, y: 318 };
+    const p = seatPos(view.dealer); if (!p) return { x: -50, y: -50 };
+    const q = toward(p, W, 0.22, 44, 70); return { x: q.x + (q.x > W / 2 ? -24 : 24), y: q.y };
+  })();
+  const piles = view.phase === 'betting' || (view.phase === 'game_over' && !view.result);
 
   // Lock the bet buttons from the tap until the server confirms, so a double tap can't send two bets.
   const [busy, setBusy] = useState(false);
@@ -673,33 +677,35 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
       <div className="topbar">
         <button className="icon-btn" aria-label="Step away" onClick={() => { play('tap'); onSheet('leave'); }}><Icon name="home" /></button>
         <span className="room-chip">{code}</span>
-        <span className="hand-no num"><span className={`clock${left > 0 && left < 120_000 ? ' low' : ''}`}><Icon name="clock" />{clock}</span> G{view.game}</span>
         <span className={`signal ${quality.q}`} role="img" aria-label={quality.q === 'offline' ? 'Offline' : `Connection ${quality.q}, ${Math.round(quality.rtt)} ms`} title={quality.q === 'offline' ? 'Offline' : `${Math.round(quality.rtt)} ms`}><i /><i /><i /></span>
         <button className="icon-btn" aria-label="Ledger" onClick={() => { play('tap'); onSheet('ledger'); }}><Icon name="ledger" /></button>
         {view.isAdmin
           ? <button className={`icon-btn${view.callOff ? ' on' : ''}`} aria-label="Admin controls" onClick={() => { play('tap'); onSheet('admin'); }}><Icon name="crown" /></button>
           : <button className="icon-btn" aria-label="Settings" onClick={onSettings}><Icon name="sliders" /></button>}
       </div>
-      <div id="table-area" ref={area} className={n > 7 ? 'many' : undefined}>
-        <div className="felt" />
+      <div id="table-area" className={n > 7 ? 'many' : undefined}>
+        <div className="rail" /><div className="felt"><span className="felt-logo">DANKA CLUB</span></div>
         <div className="center">
+          <div className="pot-row">
           <div id="deck" role="button" aria-label={o.deal ? 'Tap to deal' : 'Deck'} className={o.deal ? 'pulse' : ''} onClick={() => { if (o.deal) { client.send({ t: 'deal' }); buzz(HAP.click); } }}>
             <div className="dk back" /><div className="dk back" /><div className="dk back" />
           </div>
-          <div className="fp num">{view.commit ? `Fingerprint ${view.commit.slice(0, 8)}` : 'Fingerprint ········'}</div>
-          <div className="deal-prompt">{dealRound ? <span className="deal-round" key={dealRound.r}>{['1st', '2nd', '3rd', '4th'][dealRound.r - 1]} card · round {dealRound.r} of {dealRound.of}</span> : o.deal ? 'Tap to deal' : ''}</div>
           <div className="pot"><small>POT</small><b className="num">{fmt(view.pot)}</b></div>
-          <div className="stake num">Blind {view.rules.blind} · Seen {view.rules.seen}</div>
+          </div>
+          <div className="deal-prompt">{dealRound ? <span className="deal-round" key={dealRound.r}>{['1st', '2nd', '3rd', '4th'][dealRound.r - 1]} card · round {dealRound.r} of {dealRound.of}</span> : o.deal ? 'Tap to deal' : ''}</div>
+          <div className="stake num">Blind {view.rules.blind} · Seen {view.rules.seen} · <span className="fp">{view.commit ? `#${view.commit.slice(0, 8)}` : '#········'}</span></div>
           {view.wellCut.active && <div className="wc-chip">WELL CUT · {view.wellCut.game}/4 · {view.cardsEach} card{view.cardsEach === 1 ? '' : 's'}</div>}
           {view.callOff && <div className="mode-info">Last game: called off</div>}
+          <span className="hand-no num"><span className={`clock${left > 0 && left < 120_000 ? ' low' : ''}`}><Icon name="clock" />{clock}</span> · Game {view.game}</span>
+          <div className={`status-line${view.turn === you && view.phase === 'betting' ? ' mine' : ''}`}>{dealing && dealRound ? `${dealerName === me?.name ? 'You are' : `${dealerName} is`} dealing · ${['1st', '2nd', '3rd', '4th'][dealRound.r - 1]} card to everyone` : status}</div>
         </div>
         {view.players.map((s, i) => {
           if (i === you) return null;
-          const k = (i - you + n) % n, pos = posFor(k, n);
+          const k = (i - you + n) % n, pos = posFor(k, n, W);
           if (!pos) return null;
           const cls = ['seat', pos.s, view.turn === i && view.phase === 'betting' ? 'turn' : '', s.status === 'packed' ? 'packed' : '', s.status === 'eliminated' ? 'packed out' : '', s.seen && s.status === 'in' ? 'seen-st' : ''].join(' ');
           return (
-            <div key={i} className={cls} data-seat={i} style={{ left: `${pos.x}%`, top: `${pos.y}%` }}>
+            <div key={i} className={cls} data-seat={i} style={{ left: pos.x, top: pos.y }}>
               <div className="av-wrap">
                 <svg className="ring" viewBox="0 0 60 60"><circle className="bg" cx="30" cy="30" r="28" /><circle className="fg" cx="30" cy="30" r="28" /></svg>
                 <button className="av" style={{ background: colorOf(i) }} aria-label={`${s.name}: throw something`} onClick={() => { play('tap'); buzz(HAP.tick); onReact(i); }}>{ini(s.name)}</button>
@@ -708,13 +714,17 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
                 <div className="bubble" />
                 <div className="minis">{(cardsVisible || dealing) && s.status !== 'eliminated' && Array.from({ length: dealing ? Math.min(s.cardCount, landed) : s.cardCount }, (_, c) => <div key={c} className="mini back" />)}</div>
               </div>
-              <div className="nm">{s.name}</div>
-              <div className="co num">{fmt(s.coins)}{s.loan ? <span className="owe"> −{s.loan}</span> : null}</div>
+              <div className="plate"><div className="nm">{s.name}</div>
+                <div className="co num">{fmt(s.coins)}{s.loan ? <span className="owe"> −{s.loan}</span> : null}</div></div>
               <Tag s={s} />
             </div>
           );
         })}
-        <div id="dealer-btn" ref={dealerBtn}>D</div>
+        {view.players.map((s, i) => { const p = pilePos(i); return p && (
+          <div key={`p${i}`} className="pile-at" data-pile={i} style={{ left: p.x, top: p.y }}>
+            {piles && s.put > 0 && <><span className="pile">{pileHTML(s.put)}</span><b className="num">{fmt(s.put)}</b></>}
+          </div>); })}
+        <div id="dealer-btn" style={{ left: dealerAt.x, top: dealerAt.y }}>D</div>
         {(view.cutBar || frozen) && (
           <CutBarPanel bar={view.cutBar} frozen={frozen} isCutter={!!o.cut} cutterName={cutterName} dealerName={dealerName} serverNow={client.serverNow}
             onStop={() => { client.send({ t: 'cut', at: client.serverNow() }); }} />
@@ -726,18 +736,16 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
             <svg className="ring" viewBox="0 0 60 60"><circle className="bg" cx="30" cy="30" r="28" /><circle className="fg" cx="30" cy="30" r="28" /></svg>
             <div className="av">{ini(me?.name ?? '')}</div><span className="dot" /><div className="bubble" />
           </div>
-          <div className="co num">{fmt(me?.coins ?? 0)}</div>
-          {me && <Tag s={me} />}
+          <div className="me-info"><b>{me?.name ?? ''}</b><div className="co num">{fmt(me?.coins ?? 0)}</div>
+          {me && <Tag s={me} />}</div>
         </div>
-        <MyCards view={view} visible={cardsVisible} landed={dealing ? landed : -1} onSee={() => { if (o.see) bet('see'); }} />
-        <div className="me-right">
-          <div className="hand-name">{view.yourHand ?? ''}</div>
-          <div className="squeeze-hint">{!cardsVisible || !me ? '' : me.seen ? 'You are Seen' : me.status === 'in' ? 'Drag up on your cards to squeeze' : ''}</div>
-          {o.loan && <button className="bank-btn" onClick={() => { play('tap'); onSheet('loan'); }}><Icon name="bank" />{me?.loan ? `Owe ${fmt(me.loan)}` : 'Bank'}</button>}
+        <div className="me-cards">
+          <div className="hand-name">{view.yourHand ?? (view.phase === 'betting' && cardsVisible && me?.status === 'in' && !me.seen ? 'Drag up to squeeze' : '')}</div>
+          <MyCards view={view} visible={cardsVisible} landed={dealing ? landed : -1} onSee={() => { if (o.see) bet('see'); }} />
         </div>
       </div>
+      {o.loan && <button className="bank-btn" onClick={() => { play('tap'); onSheet('loan'); }}><Icon name="bank" /><span>{me?.loan ? `Owe ${fmt(me.loan)}` : 'Bank'}</span></button>}
       <div className="actions">
-        <div className="status-line">{dealing && dealRound ? `${dealerName === me?.name ? 'You are' : `${dealerName} is`} dealing · ${['1st', '2nd', '3rd', '4th'][dealRound.r - 1]} card to everyone` : status}</div>
         {view.phase === 'game_over' && view.isAdmin && !view.callOff ? (
           <div className="abtns">
             <button className="ab cut-stop" style={{ fontSize: 20 }} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>{o.placecutDue ? 'GO TO PLACECUT' : 'NEXT GAME'}</button>
@@ -863,14 +871,14 @@ function MyCards({ view, visible, landed, onSee }: { view: PlayerView; visible: 
 
   const down = (e: React.PointerEvent) => {
     if (!visible || !cards.length || me?.status !== 'in') return;
-    drag.current.y0 = e.clientY; drag.current.p = 0; drag.current.step = 0;
+    drag.current.y0 = toLocal(e.clientX, e.clientY).y; drag.current.p = 0; drag.current.step = 0;
     area.current?.setPointerCapture(e.pointerId);
     if (!seen) flips().forEach((f) => f.classList.add('dragging'));
   };
   const move = (e: React.PointerEvent) => {
     const d = drag.current;
     if (Number.isNaN(d.y0) || seen) return;
-    d.p = Math.max(0, Math.min(1, -(e.clientY - d.y0) / 130));
+    d.p = Math.max(0, Math.min(1, -(toLocal(e.clientX, e.clientY).y - d.y0) / 130));
     flips().forEach((f, k) => { const pk = Math.max(0, Math.min(1, d.p * 1.15 - k * 0.07)); f.style.transform = `translateY(${-pk * 14}px) rotateX(${180 - 180 * pk}deg)`; });
     const step = Math.floor(d.p * 10);
     if (step !== d.step) { d.step = step; if (step > 0) { buzz(HAP.peek); play('creak'); } }
@@ -878,7 +886,7 @@ function MyCards({ view, visible, landed, onSee }: { view: PlayerView; visible: 
   const up = (e: React.PointerEvent) => {
     const d = drag.current;
     if (Number.isNaN(d.y0)) return;
-    const dy = e.clientY - d.y0; d.y0 = NaN;
+    const dy = toLocal(e.clientX, e.clientY).y - d.y0; d.y0 = NaN;
     const now = performance.now();
     if (Math.abs(dy) < 8) { if (now - d.lastTap < 320 && !seen) { onSee(); buzz(HAP.click); } d.lastTap = now; }
     if (!seen) {
