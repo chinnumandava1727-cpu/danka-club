@@ -6,7 +6,7 @@
 import { type Card } from './cards';
 import { CAT, evaluate } from './hands';
 import {
-  BOT_PREFIX, type GameEvent, type State, act, activeSeats, answerPlayerLoan, cancelPlayerLoan, cut, cutterSeat, deal, isBotUid,
+  BOT_PREFIX, canBorrowFromPlayers, type GameEvent, type State, act, activeSeats, answerPlayerLoan, cancelPlayerLoan, cut, cutterSeat, deal, isBotUid,
   requestPlayerLoan, seatOf, takeLoan, viewFor,
 } from './danka';
 
@@ -48,6 +48,20 @@ export function handStrength(cards: Card[]): number {
 
 export interface BotTask { uid: string; at: number }
 
+/** Can't afford the opening coin and a Blind, has no bank loan left: may borrow from players. */
+const wantsLoan = (st: State, uid: string) => {
+  const i = seatOf(st, uid), p = st.players[i];
+  return !!p && canBorrowFromPlayers(st, i) && p.coins < st.rules.openingCoins + st.rules.blindCost;
+};
+/** The richest computer player first, then the richest person; never someone who said no this game. */
+function pickLender(st: State, uid: string) {
+  const i = seatOf(st, uid);
+  const others = st.players.map((q, j) => ({ q, j }))
+    .filter(({ q, j }) => j !== i && q.coins >= 15 && !st.declines.includes(`${uid}>${q.uid}`));
+  others.sort((a, b) => Number(isBotUid(b.q.uid)) - Number(isBotUid(a.q.uid)) || b.q.coins - a.q.coins);
+  return others[0] ?? null;
+}
+
 /** Time for the deal to land on everyone's screen before the first bet. */
 const dealPause = (st: State) => (st.pot === 0 ? st.cardsEach * st.dealt.length * 150 + st.cardsEach * 700 : 0);
 
@@ -59,6 +73,15 @@ export function nextBotTask(st: State, now: number, rand = Math.random): BotTask
     if (c && isBotUid(c.uid)) return { uid: c.uid, at: Math.max(now, (st.cutBar?.startAt ?? now) + 700 + rand() * 2800) };
   }
   if (st.phase === 'dealing' && isBotUid(st.dealerUid)) return { uid: st.dealerUid, at: now + 900 + rand() * 700 };
+  // between games, a computer player who can't afford the next game asks another player for a loan
+  if (st.phase === 'game_over' || st.phase === 'placecut') {
+    for (const p of st.players) {
+      if (!isBotUid(p.uid) || !wantsLoan(st, p.uid)) continue;
+      const mine = st.requests.find((r) => r.from === p.uid);
+      if (mine) { if (now - mine.at >= 9000) return { uid: p.uid, at: now }; continue; }
+      if (pickLender(st, p.uid)) return { uid: p.uid, at: now + 1200 + rand() * 1500 };
+    }
+  }
   if (st.phase === 'betting' && st.turn >= 0) {
     const p = st.players[st.turn];
     if (p && isBotUid(p.uid)) return { uid: p.uid, at: now + dealPause(st) + 650 + rand() * 1150 };
@@ -76,6 +99,13 @@ export function runBot(st: State, uid: string, now: number, rand = Math.random):
   if (req) return answerPlayerLoan(st, uid, req.id, p.coins >= req.amount + 10 && rand() < 0.75, now);
   if (st.phase === 'cutting' && cutterSeat(st) === i) return cut(st, uid, now, now);
   if (st.phase === 'dealing' && st.dealerUid === uid) return deal(st, uid, now);
+  if ((st.phase === 'game_over' || st.phase === 'placecut') && wantsLoan(st, uid)) {
+    const mine = st.requests.find((r) => r.from === uid);
+    if (mine) return now - mine.at >= 9000 ? cancelPlayerLoan(st, uid) : [];
+    const lender = pickLender(st, uid);
+    if (lender) return requestPlayerLoan(st, uid, lender.j, Math.max(1, Math.min(lender.q.coins - 10, 10 + Math.floor(rand() * 25))), now);
+    return [];
+  }
   if (st.phase !== 'betting' || st.turn !== i) return [];
 
   const v = viewFor(st, uid), o = v.options;
@@ -89,12 +119,8 @@ export function runBot(st: State, uid: string, now: number, rand = Math.random):
       return [...cancelPlayerLoan(st, uid), ...act(st, uid, { type: 'pack' }, now)];
     }
     if (o.borrow && !mine) {
-      // ask the richest computer player first, then the richest person; never someone who said no this game
-      const others = st.players.map((q, j) => ({ q, j }))
-        .filter(({ q, j }) => j !== i && q.coins >= 15 && !st.declines.includes(`${uid}>${q.uid}`));
-      others.sort((a, b) => Number(isBotUid(b.q.uid)) - Number(isBotUid(a.q.uid)) || b.q.coins - a.q.coins);
-      if (others.length) {
-        const lender = others[0];
+      const lender = pickLender(st, uid);
+      if (lender) {
         const amount = Math.max(1, Math.min(lender.q.coins - 10, 10 + Math.floor(rand() * 25)));
         return requestPlayerLoan(st, uid, lender.j, amount, now);
       }

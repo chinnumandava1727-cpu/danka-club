@@ -216,7 +216,10 @@ async function main() {
   const gameBefore = bots[0].view.game;
   bots[0].hold = false; bots[0].decide({ seq: bots[0].seq });
   await until(() => bots[0].view?.game === gameBefore + 1, 5000, 'next game starts');
-  const kept = bots[0].view.players.every((p, i) => i === 6 ? p.coins === bots[0].view.rules.startingCoins : carried[i][0] === p.coins && carried[i][1] === p.loan);
+  // balances carry over; the only change is the 1-coin opening contribution (borrowed from the bank if short)
+  const kept = bots[0].view.players.every((p, i) => i === 6 ? p.coins + p.put === bots[0].view.rules.startingCoins
+    : p.coins - p.loan + p.put === carried[i][0] - carried[i][1] && p.put <= 1);
+  check(bots[0].view.pot === bots[0].view.players.filter((p) => p.status === 'in').length || bots[0].view.phase !== 'shuffling', 'the next game opens with 1 coin from every player');
   check(kept, 'balances and loans carry into the next game');
 
   // admin calls off after a few more games

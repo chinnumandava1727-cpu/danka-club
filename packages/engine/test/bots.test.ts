@@ -22,8 +22,6 @@ async function tournament(bots: number, games: number, rules = DANKA_RULES) {
   const start = total();
   while (played < games && steps++ < 200_000) {
     if (needsDeck(st)) { await shuffleIn(st, now); continue; }
-    if (st.phase === 'game_over') { played++; now += 3000; startGame(st, 'me', now); continue; }
-    if (st.phase === 'placecut') { now += 1000; startGame(st, 'me', now); continue; }
     const ask = st.requests.find((r) => r.to === 'me');
     if (ask) { answerPlayerLoan(st, 'me', ask.id, Math.random() < 0.5 && st.players[0].coins >= ask.amount, now); continue; }
     const task = nextBotTask(st, now);
@@ -31,6 +29,13 @@ async function tournament(bots: number, games: number, rules = DANKA_RULES) {
       now = Math.max(now, task.at);
       const ev = runBot(st, task.uid, now);
       if (!ev.length) now += 1000; // waiting for a loan answer
+      continue;
+    }
+    if (st.phase === 'game_over') { played++; now += 3000; startGame(st, 'me', now); continue; }
+    if (st.phase === 'placecut') {
+      now += 1000;
+      // with too few players able to pay, wait for the broke computer players to borrow
+      try { startGame(st, 'me', now); } catch (e) { if (!(e instanceof GameError)) throw e; now += 10_000; }
       continue;
     }
     // the person's move

@@ -26,7 +26,8 @@ const posFor = (k: number, n: number, W: number): Pos | undefined => {
   if (d < arc) { const a = Math.PI * (150 / 180) + d / RY; x = cx - hs + RY * Math.cos(a); y = CY + RY * Math.sin(a); }
   else if ((d -= arc) < 2 * hs) { x = cx - hs + d; y = CY - RY; }
   else { const a = -Math.PI / 2 + (d - 2 * hs) / RY; x = cx + hs + RY * Math.cos(a); y = CY + RY * Math.sin(a); }
-  return { x, y: Math.max(60, y), s: x <= cx + 1 ? 'sl' : 'sr' };
+  // keep the corner seats clear of the room code and the tools in the top bar
+  return { x, y: Math.max(x < 210 || x > W - 210 ? 96 : 60, y), s: x <= cx + 1 ? 'sl' : 'sr' };
 };
 /** A point `f` of the way from a seat toward the middle of the table (clamped to lo..hi pixels). */
 const toward = (p: { x: number; y: number }, W: number, f: number, lo: number, hi: number) => {
@@ -167,7 +168,12 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
         case 'left': toast(`${e.name} left the table`); break;
         case 'period': play('gong'); buzz(HAP.rise); showBanner({ kind: 'round', title: `${Math.max(1, Math.round((e.endsAt - Date.now()) / 60000))} minutes`, sub: `Period ${e.round} · Placecut when the clock runs out` }, 2200); break;
         case 'start': play('chime'); setSheet((s) => (s === 'result' ? null : s)); break;
-        case 'game': if (e.wellCutGame && e.wellCutGame > 1) { play('chime'); showBanner({ kind: 'wellcut', title: `Well Cut · game ${e.wellCutGame} of 4`, sub: `${e.cardsEach} card${e.cardsEach === 1 ? '' : 's'} each` }, 2200); } break;
+        case 'game': if (e.wellCutGame) { play('chime'); showBanner({ kind: 'wellcut', title: `Well Cut · game ${e.wellCutGame} of 4`, sub: `${e.cardsEach} card${e.cardsEach === 1 ? '' : 's'} each` }, 2200); } break;
+        case 'opening':
+          // everyone's compulsory opening coin goes in at the start of the game
+          e.seats.forEach((s, k) => setTimeout(() => chip(centerOf(seatAvatar(s)), centerOf(document.querySelector(`[data-pile="${s}"]`) ?? potEl())), k * 70));
+          play('clink', e.seats.length);
+          break;
         case 'commit': shuffleDeck(); play('shuffle'); break;
         case 'cut': {
           // hold the bar on screen, frozen where it stopped, with the hidden target revealed
@@ -183,13 +189,15 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
               burst(c, ['#F4A300', '#FFF6DD', '#2FBF71', '#5BE39A', '#C8963E'], 34);
               setTimeout(() => burst(c, ['#F4A300', '#FFF6DD', '#2FBF71'], 22), 260);
             }, 300);
+            // the Well Cut never interrupts this game: the 4-card game is the next one
+            setTimeout(() => showBanner({ kind: 'wellcut', title: 'WELL CUT!', sub: 'This game carries on as normal · next game is the 4-card Well Cut game' }, 3200), 3700);
           } else {
             setTimeout(() => { play('lose'); buzz(HAP.thud); }, 250);
           }
           break;
         }
         case 'deal': {
-          // §4 One card to each player, starting on the dealer's left; then the second round, third, and fourth after a Well Cut.
+          // §4 One card to each player, starting on the dealer's RIGHT; then the second round, third, and fourth after a Well Cut.
           setDealing(true); setLanded(0);
           const per = settings.reduce ? 25 : 150, gap = settings.reduce ? 60 : 420, fly1 = 260;
           let t = 0;
@@ -633,7 +641,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
     const p = seatPos(view.dealer); if (!p) return { x: -50, y: -50 };
     const q = toward(p, W, 0.22, 44, 70); return { x: q.x + (q.x > W / 2 ? -24 : 24), y: q.y };
   })();
-  const piles = view.phase === 'betting' || (view.phase === 'game_over' && !view.result);
+  const piles = view.phase === 'shuffling' || view.phase === 'cutting' || view.phase === 'dealing' || view.phase === 'betting';
 
   // Lock the bet buttons from the tap until the server confirms, so a double tap can't send two bets.
   const [busy, setBusy] = useState(false);
@@ -694,7 +702,8 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
           </div>
           <div className="deal-prompt">{dealRound ? <span className="deal-round" key={dealRound.r}>{['1st', '2nd', '3rd', '4th'][dealRound.r - 1]} card · round {dealRound.r} of {dealRound.of}</span> : o.deal ? 'Tap to deal' : ''}</div>
           <div className="stake num">Blind {view.rules.blind} · Seen {view.rules.seen} · <span className="fp">{view.commit ? `#${view.commit.slice(0, 8)}` : '#········'}</span></div>
-          {view.wellCut.active && <div className="wc-chip">WELL CUT · {view.wellCut.game}/4 · {view.cardsEach} card{view.cardsEach === 1 ? '' : 's'}</div>}
+          {view.wellCut.next && <div className="wc-chip">WELL CUT NEXT GAME · 4 cards</div>}
+          {view.wellCut.active && !view.wellCut.next && <div className="wc-chip">WELL CUT · {view.wellCut.game}/4 · {view.cardsEach} card{view.cardsEach === 1 ? '' : 's'}</div>}
           {view.callOff && <div className="mode-info">Last game: called off</div>}
           <span className="hand-no num"><span className={`clock${left > 0 && left < 120_000 ? ' low' : ''}`}><Icon name="clock" />{clock}</span> · Game {view.game}</span>
           <div className={`status-line${view.turn === you && view.phase === 'betting' ? ' mine' : ''}`}>{dealing && dealRound ? `${dealerName === me?.name ? 'You are' : `${dealerName} is`} dealing · ${['1st', '2nd', '3rd', '4th'][dealRound.r - 1]} card to everyone` : status}</div>
@@ -763,7 +772,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
             : <button className={`ab chaal${o.mustSeen ? ' must' : ''}`} disabled={!(o.blind || o.seen) || busy} onClick={() => bet(o.blind ? 'blind' : 'seen')}>
               <span>{o.blind ? 'Blind' : 'Seen'}</span><small className="num">{o.mustSeen ? `must · ${view.rules.seen} coins` : o.blind ? `${view.rules.blind} coin` : `${view.rules.seen} coins`}</small></button>}
           {o.sideshow && <button className="ab raise" disabled={busy} onClick={() => bet('sideshow')}>Sideshow<small className="num">{o.sideshow.cost} · {sideTarget}</small></button>}
-          {o.show !== null && <button className="ab show" disabled={busy} onClick={() => bet('show')}>Show<small className="num">{o.show}</small></button>}
+          {o.show !== null && <button className="ab show" disabled={busy} onClick={() => bet('show')}>{me?.seen ? 'Show' : 'Blind Show'}<small className="num">{o.show}</small></button>}
         </div>
         )}
       </div>
@@ -839,7 +848,7 @@ function CutBarPanel({ bar, frozen, isCutter, cutterName, dealerName, serverNow,
     ? (frozen.wellCut ? (frozen.off <= 0.4 ? 'PERFECT!' : 'WELL CUT!') : frozen.off - zone < 2 ? 'SO CLOSE!' : 'NO WELL CUT')
     : stoppedAt !== null ? 'STOPPED…' : ready ? 'GET READY' : isDealer ? 'STOP ON THE LINE' : `${cutterName.toUpperCase()} IS CUTTING`;
   const sub = frozen
-    ? (frozen.wellCut ? `4 games: 4, 3, 2, 1 cards · ${dealerName} deals` : `Missed by ${(frozen.off - zone).toFixed(1)}% · ${dealerName} deals${frozen.auto ? ' (timer)' : ''}`)
+    ? (frozen.wellCut ? `This game carries on · Well Cut games start next game` : `Missed by ${(frozen.off - zone).toFixed(1)}% · ${dealerName} deals${frozen.auto ? ' (timer)' : ''}`)
     : isDealer ? `You cut for ${dealerName}` : `Then ${dealerName} deals`;
 
   return (
@@ -958,6 +967,7 @@ function ResultSheet({ open, view, client, verify, onVerify }: { open: boolean; 
       <div className="grab" />
       <div className="res-top"><div className="lav" style={{ background: colorOf(r.winner) }}>{ini(r.winnerName)}</div>
         <div><b>{r.winner === view.you ? 'You win' : `${r.winnerName} wins`} {fmt(r.pot)}</b><span>{sub} · {kind}</span></div></div>
+      {view.wellCut.next && <div className="bonus-line"><b>Well Cut next</b><span>The next game is the 4-card Well Cut game, then 3, 2 and 1 cards.</span></div>}
       {r.bonus && (
         <div className="bonus-line"><b>{r.bonus.kind === 'quad' ? 'Four of a Kind' : 'Three of a Kind'} bonus</b>
           <span>+{r.bonus.total}: {r.bonus.each} from each other player</span></div>

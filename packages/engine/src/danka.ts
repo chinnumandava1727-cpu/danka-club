@@ -59,7 +59,7 @@ export interface Player {
 }
 
 export type TxType =
-  | 'initial' | 'blind' | 'seen' | 'show' | 'sideshow' | 'pot_win' | 'bonus_in' | 'bonus_out'
+  | 'initial' | 'opening' | 'blind' | 'seen' | 'show' | 'sideshow' | 'pot_win' | 'bonus_in' | 'bonus_out'
   | 'loan' | 'p2p_in' | 'p2p_out' | 'eliminated' | 'placecut' | 'leave' | 'admin';
 
 /** §17 One ledger entry. `amount` is + for coins in, − for coins out. */
@@ -228,6 +228,8 @@ export type GameEvent =
   | { e: 'turn'; seat: number }
   | { e: 'see'; seat: number; auto: boolean }
   | { e: 'bet'; seat: number; kind: 'blind' | 'seen' | 'show' | 'sideshow'; amount: number }
+  /** The compulsory 1-coin opening contribution from every player in the game. */
+  | { e: 'opening'; seats: number[]; amount: number }
   | { e: 'pack'; seat: number; reason: 'choice' | 'timeout' }
   | { e: 'sideshow'; from: number; to: number; loser: number }
   | { e: 'show'; a: number; b: number; winner: number }
@@ -267,6 +269,8 @@ export interface State {
   /** Players dealt into the current game (for the bonus count N). */
   dealt: number[];
   wellCut: { active: boolean; index: number };
+  /** A Well Cut was stopped in the current game: the four-game sequence starts with the next game. */
+  wellCutNext?: boolean;
   wellCutCount: number;
   /** Bank loans issued in the tournament. */
   bankLoansTotal: number;
@@ -353,7 +357,7 @@ export const loanLeft = (st: State, i: number) => Math.max(0, st.rules.maxLoan -
 export const onlyBlindLeft = (st: State, i: number) =>
   !st.players[i].seen && st.players[i].status === 'in' && activeSeats(st).length >= 3 && activeSeats(st).every((j) => j === i || st.players[j].seen);
 /** Can sit down for a game: enough for a Blind, or bank loan left. */
-const canPlay = (st: State, i: number) => st.players[i].coins >= st.rules.blindCost || loanLeft(st, i) > 0;
+const canPlay = (st: State, i: number) => st.players[i].coins >= Math.max(st.rules.blindCost, st.rules.openingCoins) || loanLeft(st, i) >= st.rules.openingCoins - st.players[i].coins;
 /** Final lending rule: used all 200 coins (bank loan used up, not enough for a Seen turn) → may borrow from players. */
 export const canBorrowFromPlayers = (st: State, i: number) =>
   loanLeft(st, i) === 0 && st.players[i].coins < st.rules.seenCost;
@@ -544,6 +548,23 @@ function beginGame(st: State, now: number): GameEvent[] {
   st.deadline = null;
   for (const i of st.dealt) st.players[i].rs.games += 1;
   ev.push({ e: 'game', game: st.game, cardsEach: st.cardsEach, wellCutGame: wellCutGameNo(st) });
+  // Rule update 1: every player in the game puts 1 coin into the pot once, before any Blind, Seen or pack.
+  // A player short of the coin borrows it from the bank automatically (canPlay guarantees there is loan left).
+  const amount = st.rules.openingCoins;
+  for (const i of st.dealt) {
+    const p = st.players[i];
+    if (p.coins < amount) {
+      const borrow = Math.min(amount - p.coins, loanLeft(st, i));
+      p.coins += borrow; p.loan += borrow; p.rs.loans += borrow; st.bankLoansTotal += borrow;
+      tx(st, now, i, 'loan', borrow, 'Automatic bank loan for the opening coin');
+    }
+    p.coins -= amount;
+    p.contributed += amount;
+    p.rs.paid += amount;
+    st.pot += amount;
+    tx(st, now, i, 'opening', -amount, `Opening contribution, game ${st.game}`);
+  }
+  ev.push({ e: 'opening', seats: [...st.dealt], amount });
   return ev;
 }
 
@@ -604,14 +625,19 @@ export function barPosition(bar: CutBar, at: number): number {
  * The dealer only deals.
  */
 export function cutterSeat(st: State): number {
-  return dealOrder(st)[0] ?? dealerIndex(st);
+  const c = nextActive(st, dealerIndex(st));
+  return c < 0 ? dealerIndex(st) : c;
 }
 
-/** Clockwise from the dealer's left, skipping folded/eliminated players. */
+/**
+ * Rule update 2: the dealer always deals from the player on their RIGHT and carries on in that direction
+ * (anticlockwise), one card per player per round, ending with the dealer. Same for every game, Well Cut
+ * games included. Betting still starts on the dealer's left.
+ */
 export function dealOrder(st: State): number[] {
   const n = st.players.length, d = dealerIndex(st), order: number[] = [];
   for (let k = 1; k <= n; k++) {
-    const j = (d + k) % n;
+    const j = (d - k + n * 2) % n;
     if (st.players[j].status === 'in') order.push(j);
   }
   return order;
@@ -627,7 +653,7 @@ function lockCards(st: State) {
 /**
  * §5 The dealer stopped the timing bar at server time `at` (the server checks it against when the tap
  * arrived). Within `wellCutZone`% of the middle it is a Well Cut, and the four-game sequence starts
- * with this game. Pass uid null for the automatic stop (timer on).
+ * with the next game. Pass uid null for the automatic stop (timer on).
  */
 export function cut(st: State, uid: string | null, at: number, now: number): GameEvent[] {
   if (st.phase !== 'cutting') fail('not_cutting', 'There is nothing to cut right now.');
@@ -638,10 +664,11 @@ export function cut(st: State, uid: string | null, at: number, now: number): Gam
   const players = activeSeats(st).length;
   const wellCut = off <= bar.zone;
   st.lastCut = { pos, off, players, wellCut };
+  // Rule update 4: a Well Cut never interrupts this game. It is played as normal and the four-game
+  // sequence (4, 3, 2, 1 cards) starts with the next game.
   if (wellCut) {
-    st.wellCut = { active: true, index: 0 };
+    st.wellCutNext = true;
     st.wellCutCount += 1;
-    st.cardsEach = st.rules.wellCutSequence[0];
   }
   lockCards(st);
   st.phase = 'dealing';
@@ -744,10 +771,10 @@ export function act(st: State, uid: string, action: Action, now: number): GameEv
     }
 
     case 'show': {
-      // §8 Only when two players remain. A Blind player may Show only when the other is Seen.
+      // §8 Only when two players remain. Rule update 3: with two players either may Show, even while
+      // both are Blind; a Blind Show costs the Blind stake (1 coin), a Seen Show the Seen stake.
       if (active.length !== 2) fail('show_not_allowed', 'Show is allowed only when two players remain. Use Sideshow when everyone is Seen.');
       const other = active.find((j) => j !== i)!;
-      if (!p.seen && !st.players[other].seen) fail('blind_show', 'A Blind player can Show only after the other player is Seen.');
       const cost = costFor(st, i);
       pay(st, i, cost, 'show', now);
       ev.push({ e: 'bet', seat: i, kind: 'show', amount: cost });
@@ -927,6 +954,11 @@ function finishGame(st: State, winner: number, reason: 'all_packed' | 'show', sh
     st.wellCut.index += 1;
     if (st.wellCut.index >= st.rules.wellCutSequence.length) st.wellCut = { active: false, index: 0 };
   }
+  // A Well Cut stopped in this game: the sequence is queued for the next game (and Placecut waits for it).
+  if (st.wellCutNext) {
+    st.wellCutNext = false;
+    if (!st.wellCut.active) st.wellCut = { active: true, index: 0 };
+  }
   st.turn = -1;
   st.phase = 'game_over';
   // Individual game settlement (not a Placecut).
@@ -1045,7 +1077,8 @@ export interface PlayerView {
   turn: number;
   pot: number;
   cardsEach: number;
-  wellCut: { active: boolean; game: number | null; sequence: number[] };
+  /** `next`: a Well Cut was stopped; the 4-card game is the next one. */
+  wellCut: { active: boolean; game: number | null; sequence: number[]; next: boolean };
   wellCutCount: number;
   lastCut: CutInfo | null;
   /** The timing bar while the dealer cuts: every phone draws the same slider from this. */
@@ -1105,10 +1138,7 @@ export function viewFor(st: State, uid: string): PlayerView {
   const isAdmin = uid === st.adminUid;
   const cost = me >= 0 ? costFor(st, me) : 0;
   let show: number | null = null;
-  if (myTurn && active.length === 2) {
-    const other = active.find((j) => j !== me)!;
-    if (mine!.seen || st.players[other].seen) show = cost;
-  }
+  if (myTurn && active.length === 2) show = cost;
   const sideshow = myTurn && active.length >= 3 && allActiveSeen(st) ? { cost: st.rules.sideshowCost, target: nextActive(st, me) } : null;
   const needed = myTurn ? Math.max(0, cost - mine!.coins) : 0;
   const between = st.phase === 'lobby' || st.phase === 'placecut';
@@ -1119,7 +1149,7 @@ export function viewFor(st: State, uid: string): PlayerView {
     phase: st.phase, you: me, isAdmin, round: st.round, roundEndsAt: st.roundEndsAt, callOff: st.callOff, timerOn: st.timerOn,
     tableSize: st.tableSize, minPlayers: st.rules.minPlayers, maxPlayers: st.rules.maxPlayers,
     game: st.game, roundGames: st.roundGames, dealer: d, cutter: cutterSeat(st), turn: st.turn, pot: st.pot, cardsEach: st.cardsEach,
-    wellCut: { active: st.wellCut.active, game: wellCutGameNo(st), sequence: st.rules.wellCutSequence },
+    wellCut: { active: st.wellCut.active, game: wellCutGameNo(st), sequence: st.rules.wellCutSequence, next: !!st.wellCutNext || (st.phase === 'game_over' && st.wellCut.active && st.wellCut.index === 0) },
     wellCutCount: st.wellCutCount,
     lastCut: st.phase === 'cutting' ? null : st.lastCut,
     cutBar: st.phase === 'cutting' ? st.cutBar : null,

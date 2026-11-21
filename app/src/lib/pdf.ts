@@ -120,7 +120,7 @@ export async function settlementPdf(r: SessionReport): Promise<Blob> {
   table(
     [{ h: '#', w: 1.2, right: true }, { h: 'Time', w: 1.5 }, { h: 'Rd', w: 0.8, right: true }, { h: 'Game', w: 1, right: true }, { h: 'Player', w: 3 },
       { h: 'Type', w: 2 }, { h: 'Amount', w: 1.6, right: true }, { h: 'Balance', w: 1.6, right: true }, { h: 'Note', w: 6 }],
-    r.ledger.map((t) => [t.id, hm(t.at), t.round, t.game, t.name, ({ p2p_in: 'borrowed', p2p_out: 'lent', pot_win: 'pot won', bonus_in: 'bonus in', bonus_out: 'bonus out', eliminated: 'sat out' } as Record<string, string>)[t.type] ?? t.type, t.amount ? sgn(t.amount) : '', t.balance, t.note ?? '']),
+    r.ledger.map((t) => [t.id, hm(t.at), t.round, t.game, t.name, ({ opening: 'opening coin', p2p_in: 'borrowed', p2p_out: 'lent', pot_win: 'pot won', bonus_in: 'bonus in', bonus_out: 'bonus out', eliminated: 'sat out' } as Record<string, string>)[t.type] ?? t.type, t.amount ? sgn(t.amount) : '', t.balance, t.note ?? '']),
     7,
   );
 

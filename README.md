@@ -11,7 +11,7 @@ Private 7-player Danka card game. Coins have no cash value.
 ## House rules
 
 The game follows the group's own rules document (DANKA CLUB Complete Game Rules, sections 1–21) and nothing else:
-no Chaal, no Raise, no boot, no extra modes. The values live in `packages/engine/src/rules.ts` (`DANKA_RULES`);
+no Chaal, no Raise, no extra modes. The values live in `packages/engine/src/rules.ts` (`DANKA_RULES`);
 the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packages/engine/src/hands.ts`.
 
 - 2–10 players. The first to enter is admin and deals game 1; every winner deals the next game (Well Cut games included).
@@ -20,18 +20,23 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   they can ask any one player for any amount up to what that player holds. The lender accepts or declines; after a
   decline they can ask someone else. Accepted coins move at once (existing coins, never new ones) and the borrower
   owes that lender until the tournament closes. A player with no coins and no loan sits a game out but stays.
+- **Opening coin:** at the start of every game (Well Cut games too) each player in the game puts 1 coin into the pot,
+  once, recorded separately in the ledger. A player short of it borrows it from the bank automatically.
+- **Dealing:** cards are dealt one per player per round starting with the player on the dealer's **right** and going
+  the same way round, ending with the dealer, in every game. Betting still starts on the dealer's left.
 - Blind costs 1, Seen costs 2. Seeing your cards makes you Seen. Pack any time on your turn.
 - **Blind/Seen rotation:** before anyone in a game has played Seen, Blind is unrestricted and nobody is forced to
   open their cards. After the first Seen (3+ active), a Blind bet forces the next active player to play Seen; if that
   player folds, the next active player must play Seen. With only two players left the restriction and the
   three-Blind limit are removed.
-- Show only when two players remain, priced automatically (Blind 1, Seen 2). A Blind player can't Show against another Blind player.
+- Show only when two players remain, priced automatically (Blind 1, Seen 2). With two players either one may
+  **Blind Show** for 1 coin even while both are Blind, without seeing their cards first.
 - When everyone else is Seen, the last Blind player gets 3 more Blind turns, then their cards are shown automatically.
 - Sideshow only when every active player is Seen: with the next active player on your left, costs 2, can't be refused,
   compared privately, weaker hand folds.
 - **Well Cut timing bar.** The system shuffles; then a slider runs up and down a bar on every phone. The player on
-  the **dealer's left** taps STOP (the dealer only deals); stopping within 1.5% of the middle (the gold line) is a **Well Cut**: four compulsory games of 4, 3, 2 and
-  1 cards. The slider is fastest through the middle, changes speed every pass (crypto random) and speeds up, so it
+  the **dealer's left** taps STOP (the dealer only deals); stopping within 1.5% of the middle (the gold line) is a **Well Cut**: the game being cut is played
+  as normal, and the four compulsory games of 4, 3, 2 and 1 cards start with the next game (everyone is told at once). The slider is fastest through the middle, changes speed every pass (crypto random) and speeds up, so it
   can't be learned: about 3–5 Well Cuts per 80 games. The server accepts a stop time only from the last 0.25 s before
   the tap arrived.
 - Ranking follows the group's Local Card Rules (`packages/engine/src/hands.ts`):

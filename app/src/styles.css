@@ -183,8 +183,8 @@ button:focus-visible, input:focus-visible{outline:2px solid var(--marigold); out
   border:2.5px solid var(--ivory)}
 .cf{position:absolute; inset:0; border-radius:9px; background:linear-gradient(180deg,#FFFBF2,#F1E8D6); border:1px solid #D9CCB0; color:#1C1C1C}
 .cf .cr{position:absolute; left:7px; top:4px; font-family:var(--display); font-weight:800; font-size:22px; line-height:1}
-.cf .cs{position:absolute; left:8px; top:27px; font-size:15px; line-height:1}
-.cf .cbig{position:absolute; right:7px; bottom:3px; font-size:38px; line-height:1}
+.cf .cs{position:absolute; left:6px; top:26px; font-size:23px; line-height:1}
+.cf .cbig{position:absolute; right:6px; bottom:2px; font-size:50px; line-height:1}
 .s-ht, .s-di{color:#C62828} .s-sp, .s-cl{color:#1C1C1C}
 .four .s-di{color:#1565C0} .four .s-cl{color:#2E7D32}
 
@@ -294,7 +294,7 @@ input[type=range]{width:100%; accent-color:var(--marigold); height:28px}
 .sh-cards{display:flex; height:66px}
 .sh-cards .pc2{width:44px; height:62px; position:relative; perspective:500px; margin-left:-12px}
 .sh-cards .pc2:first-child{margin-left:0}
-.sh-cards .cf .cr{font-size:15px; left:4px; top:3px} .sh-cards .cf .cs{font-size:10px; left:5px; top:19px} .sh-cards .cf .cbig{font-size:22px; right:4px; bottom:2px}
+.sh-cards .cf .cr{font-size:15px; left:4px; top:3px} .sh-cards .cf .cs{font-size:16px; left:4px; top:18px} .sh-cards .cf .cbig{font-size:32px; right:3px; bottom:1px}
 .sh-cards .flip .bk{border-width:2px}
 
 #result{z-index:46}

@@ -10,6 +10,8 @@ export interface DankaRules {
   startingCoins: number;
   /** §13 Maximum cumulative bank loan per player. */
   maxLoan: number;
+  /** Rule update 1: compulsory coin every player puts in the pot at the start of each game. */
+  openingCoins: number;
   /** §7 Cost of one Blind action and one Seen action. There is no Chaal. */
   blindCost: number;
   seenCost: number;
@@ -47,6 +49,7 @@ export const DANKA_RULES: Readonly<DankaRules> = Object.freeze({
   maxPlayers: 10,
   startingCoins: 100,
   maxLoan: 100,
+  openingCoins: 1,
   blindCost: 1,
   seenCost: 2,
   sideshowCost: 2,

@@ -98,3 +98,7 @@
 #app.land .sheet .grab{display:none}
 #app.land .status-banner{left:50%; right:auto; width:440px; transform:translateX(-50%); top:56px}
 #app.land #toast{top:56px}
+
+/* bigger suits on smaller cards: keep the big suit clear of the corner */
+#my-cards.n4 .cf .cbig{font-size:40px}
+@media (max-height:700px){ .cf .cbig{font-size:44px} }
