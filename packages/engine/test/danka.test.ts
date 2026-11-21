@@ -317,6 +317,20 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
   });
 });
 
+describe('no peeking while Blind', () => {
+  it('a Blind player is never sent their own cards; they arrive only after See', async () => {
+    const st = room(3);
+    await toBetting(st);
+    const mine = () => viewFor(st, uid(1)).players[1];
+    expect(mine()).toMatchObject({ cards: null, cardCount: 3, seen: false });
+    expect(viewFor(st, uid(1)).yourHand).toBeNull();
+    a(st, 1, 'see');
+    expect(mine().cards).toHaveLength(3);
+    expect(viewFor(st, uid(2)).players[2].cards).toBeNull(); // still Blind
+    expect(viewFor(st, uid(2)).players[1].cards).toBeNull(); // never anyone else's
+  });
+});
+
 describe('opening contribution (rule update 1)', () => {
   it('every player puts exactly 1 coin into the pot at the start of each game, recorded separately', async () => {
     const st = room(5);

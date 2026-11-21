@@ -10,31 +10,39 @@ import { CardFace } from '../lib/cards';
 import { deliverPdf, settlementPdf } from '../lib/pdf';
 import type { ToastFn } from '../App';
 import { Icon } from './Icon';
-import { toLocal, useLandscape } from '../lib/landscape';
+import { useTableFrame } from '../lib/tableFrame';
 
 const COLORS = ['#F4A300', '#81B29A', '#E07A5F', '#F2CC8F', '#B8A1D9', '#6FB7E0', '#E9A6A6', '#9FD3C7', '#D9A5F2', '#C9D97A'];
 const colorOf = (i: number) => COLORS[i % COLORS.length];
-// The table is laid out sideways (design height 430). Other players sit around the rail of an oval
-// poker table, clockwise from your left; you sit at the bottom centre.
+// The table is upright (design width 430, height H). Other players sit around the rail of an oval poker
+// table, clockwise from your left: up the left side, over the top, down the right side. You sit at the bottom.
 type Pos = { x: number; y: number; s: 'sl' | 'sr' };
-const CY = 192, RY = 150;
-const posFor = (k: number, n: number, W: number): Pos | undefined => {
+const CX = 215, RAIL_TOP = 84, RAIL_BOTTOM = 226, RAIL_R = 153, SEAT_R = 162, EXTRA = (30 * Math.PI) / 180;
+const geo = (H: number) => {
+  const top = RAIL_TOP + RAIL_R, bottom = Math.max(top, H - RAIL_BOTTOM - RAIL_R);
+  return { top, bottom, cy: (top + bottom) / 2 };
+};
+const posFor = (k: number, n: number, H: number): Pos | undefined => {
   if (k < 1 || k >= n) return undefined;
-  // Seats are spaced evenly along the rail (a stadium shape): up the left end, across the top, down the right end.
-  const cx = W / 2, hs = W / 2 - 62 - RY, arc = (RY * 2 * Math.PI) / 3, total = 2 * arc + 2 * hs;
+  const { top, bottom } = geo(H), R = SEAT_R, side = bottom - top;
+  // path: a little of the bottom-left curve, up the left side, over the top, down the right side, a little of the bottom-right curve
+  const parts = [R * EXTRA, side, Math.PI * R, side, R * EXTRA];
+  const total = parts.reduce((a, b) => a + b, 0);
   let d = (total * (k - 0.5)) / (n - 1), x: number, y: number;
-  if (d < arc) { const a = Math.PI * (150 / 180) + d / RY; x = cx - hs + RY * Math.cos(a); y = CY + RY * Math.sin(a); }
-  else if ((d -= arc) < 2 * hs) { x = cx - hs + d; y = CY - RY; }
-  else { const a = -Math.PI / 2 + (d - 2 * hs) / RY; x = cx + hs + RY * Math.cos(a); y = CY + RY * Math.sin(a); }
-  // keep the corner seats clear of the room code and the tools in the top bar
-  return { x, y: Math.max(x < 210 || x > W - 210 ? 96 : 60, y), s: x <= cx + 1 ? 'sl' : 'sr' };
+  if (d < parts[0]) { const a = Math.PI - EXTRA + d / R; x = CX + R * Math.cos(a); y = bottom + R * Math.sin(a); }
+  else if ((d -= parts[0]) < side) { x = CX - R; y = bottom - d; }
+  else if ((d -= side) < parts[2]) { const a = Math.PI + d / R; x = CX + R * Math.cos(a); y = top + R * Math.sin(a); }
+  else if ((d -= parts[2]) < side) { x = CX + R; y = top + d; }
+  else { d -= side; const a = d / R; x = CX + R * Math.cos(a); y = bottom + R * Math.sin(a); }
+  return { x, y: Math.max(62, y), s: x <= CX + 1 ? 'sl' : 'sr' };
 };
 /** A point `f` of the way from a seat toward the middle of the table (clamped to lo..hi pixels). */
-const toward = (p: { x: number; y: number }, W: number, f: number, lo: number, hi: number) => {
-  const dx = W / 2 - p.x, dy = CY - p.y, L = Math.hypot(dx, dy) || 1, d = Math.min(hi, Math.max(lo, L * f));
+const toward = (p: { x: number; y: number }, H: number, f: number, lo: number, hi: number) => {
+  const dx = CX - p.x, dy = geo(H).cy - p.y, L = Math.hypot(dx, dy) || 1, d = Math.min(hi, Math.max(lo, L * f));
   return { x: p.x + (dx / L) * d, y: p.y + (dy / L) * d };
 };
 const pileHTML = (v: number) => Array.from({ length: Math.min(7, Math.ceil(v / 2)) }, (_, k) => <i key={k} style={{ bottom: k * 3 }} />);
+const SETTLE_MS = 25_000;
 const ini = (name: string) => name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '?';
 const fmt = (n: number) => n.toLocaleString('en-IN');
 const sgn = (n: number) => (n > 0 ? `+${fmt(n)}` : fmt(n));
@@ -74,6 +82,15 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
   const [view, setView] = useState<PlayerView | null>(null);
   const [status, setStatus] = useState<Status>('connecting');
   const [sheet, setSheet] = useState<Sheet>(null);
+  // After a Placecut everyone sees the settlement, then goes back to the waiting room (balances carry forward).
+  const [settleAt, setSettleAt] = useState<number | null>(null);
+  const phase = view?.phase;
+  useEffect(() => { setSettleAt(phase === 'placecut' ? Date.now() + SETTLE_MS : null); }, [phase]);
+  useEffect(() => {
+    if (settleAt === null) return;
+    const t = setTimeout(() => setSettleAt(0), Math.max(0, settleAt - Date.now()));
+    return () => clearTimeout(t);
+  }, [settleAt]);
   const [dealing, setDealing] = useState(false);
   /** §4 Round-by-round deal on screen: which card round is flying, and how many rounds have landed. */
   const [dealRound, setDealRound] = useState<{ r: number; of: number } | null>(null);
@@ -357,9 +374,12 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
     </>
   );
 
-  if (view.phase === 'lobby') return <><Lobby view={view} code={code} client={send} toast={toast} onExit={onExit} onSettings={onSettings} onAdmin={() => setSheet('admin')} />{adminSheet}{offlineBanner}</>;
+  const lobby = <Lobby view={view} code={code} client={send} toast={toast} onExit={onExit} onSettings={onSettings} onAdmin={() => setSheet('admin')}
+    onSettlement={() => setSettleAt(Date.now() + SETTLE_MS)} onBorrow={() => setSheet('loan')} />;
+  if (view.phase === 'lobby' || (view.phase === 'placecut' && !settleAt)) return <>{lobby}{adminSheet}{offlineBanner}</>;
   if (view.phase === 'placecut' || view.phase === 'ended') {
-    return <><Placecut view={view} code={code} client={send} toast={toast} exporting={exporting} onExport={exportPdf} onExit={onExit} onSettings={onSettings} onAdmin={() => setSheet('admin')} onBorrow={() => setSheet('loan')} />{adminSheet}{offlineBanner}</>;
+    return <><Placecut view={view} exporting={exporting} onExport={exportPdf} onExit={onExit} onSettings={onSettings} onAdmin={() => setSheet('admin')}
+      backAt={view.phase === 'placecut' ? settleAt : null} onLobby={() => setSettleAt(0)} />{adminSheet}{offlineBanner}</>;
   }
 
   return (
@@ -406,7 +426,8 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
 
 /* ================= LOBBY ================= */
 
-function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin }: { view: PlayerView; code: string; client: RoomClient; toast: ToastFn; onExit: (m?: string) => void; onSettings: () => void; onAdmin: () => void }) {
+function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin, onSettlement, onBorrow }: { view: PlayerView; code: string; client: RoomClient; toast: ToastFn; onExit: (m?: string) => void; onSettings: () => void; onAdmin: () => void; onSettlement: () => void; onBorrow: () => void }) {
+  const after = view.phase === 'placecut';
   const me = view.players[view.you];
   const isAdmin = view.isAdmin;
   const n = view.players.length;
@@ -417,11 +438,12 @@ function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin }: { vie
     <section className="screen" id="lobby" aria-label="Waiting room">
       <div className="bar">
         <button className="icon-btn" aria-label="Leave waiting room" onClick={() => { if (isAdmin) onExit(); else client.send({ t: 'leave' }); }}><Icon name="back" /></button>
-        <h2>Waiting room</h2>
+        <h2>{after ? `Waiting room · after Placecut ${view.round}` : 'Waiting room'}</h2>
         {isAdmin && <button className="icon-btn" style={{ marginLeft: 'auto' }} aria-label="Admin controls" onClick={() => { play('tap'); onAdmin(); }}><Icon name="crown" /></button>}
         <button className="icon-btn" style={isAdmin ? undefined : { marginLeft: 'auto' }} aria-label="Settings" onClick={onSettings}><Icon name="sliders" /></button>
       </div>
       <InviteCard code={code} toast={toast} />
+      {after && <button className="btn line settle-cta" onClick={() => { play('tap'); onSettlement(); }}><Icon name="file" />Placecut {view.round} settlement</button>}
       <div className="lobby-status"><span>{!full ? `${size - n} seat${size - n === 1 ? '' : 's'} open` : 'Table full'}</span><b className="num">{n}/{size}</b></div>
       <div className="progress"><i style={{ width: `${(n / size) * 100}%` }} /></div>
       {isAdmin && (
@@ -446,18 +468,26 @@ function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin }: { vie
               <span className="ord">#{i + 1}</span>
               <span className="lav" style={{ background: colorOf(i) }}>{ini(s.name)}</span>
               <span className="who"><b>{i === view.you ? `${s.name} (you)` : s.name}</b>
-                <span className="badges">{s.isAdmin && <span className="badge">Admin</span>}{s.bot && <span className="badge cpu">Computer</span>}{s.isDealer && <span className="badge deal">Deals game 1</span>}{!s.connected && <span className="badge">Offline</span>}</span></span>
-              <span className="ready ok num">{fmt(s.coins)}</span>
+                <span className="badges">{s.isAdmin && <span className="badge">Admin</span>}{s.bot && <span className="badge cpu">Computer</span>}{s.isDealer && <span className="badge deal">{after ? 'Deals next' : 'Deals game 1'}</span>}{!s.connected && <span className="badge">Offline</span>}</span></span>
+              <span className="ready ok num">{fmt(s.coins)}{s.loan ? <small className="owe"> −{fmt(s.loan)}</small> : null}</span>
               {isAdmin && s.bot && <button className="rm-bot" aria-label={`Remove ${s.name}`} onClick={() => { client.send({ t: 'remove_bot', seat: i }); play('tap'); }}>×</button>}
             </div>
           );
         })}
       </div>
-      <p className="rule-note">Everyone starts with {view.rules.startingCoins} coins. The admin deals game 1, then each winner deals. Every 20 minutes, after the game in progress, there is a Placecut: settlement, and players can join or leave.</p>
-      <div className="lobby-actions" style={{ gridTemplateColumns: '1fr' }}>
+      <p className="rule-note">{after
+        ? 'Every score carries forward: balances, bank loans, player loans and totals. New players can join now with ' + view.rules.startingCoins + ' coins, and anyone can leave.'
+        : `Everyone starts with ${view.rules.startingCoins} coins. The admin deals game 1, then each winner deals. Every 20 minutes, after the game in progress, there is a Placecut: settlement, and players can join or leave.`}</p>
+      {after && view.options.borrow && (
+        <button className="btn line borrow-cta" onClick={() => { play('tap'); onBorrow(); }}><Icon name="bank" />{view.myRequest ? `Waiting for ${view.players[view.myRequest.to]?.name}…` : 'Borrow from a player'}</button>
+      )}
+      <div className="lobby-actions" style={{ gridTemplateColumns: !isAdmin && after ? '1fr 1fr' : '1fr' }}>
         {isAdmin
-          ? <button className="btn gold" disabled={!view.options.startGame} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>{n < view.minPlayers ? `Waiting for players (${n}/${view.minPlayers})` : `Start 20 minutes with ${n}`}</button>
-          : <button className="btn gold" disabled>{me ? 'Waiting for the admin to start' : 'Joining…'}</button>}
+          ? <button className="btn gold" disabled={!view.options.startGame} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>{n < view.minPlayers ? `Waiting for players (${n}/${view.minPlayers})` : after ? `Start next 20 minutes with ${n}` : `Start 20 minutes with ${n}`}</button>
+          : <>
+            {after && <button className="btn line" disabled={!view.options.leave} onClick={() => client.send({ t: 'leave' })}>Leave the room</button>}
+            <button className="btn gold" disabled>{me ? 'Waiting for the admin to start' : 'Joining…'}</button>
+          </>}
       </div>
     </section>
   );
@@ -483,16 +513,19 @@ function InviteCard({ code, toast }: { code: string; toast: ToastFn }) {
 
 /* ================= PLACECUT / SETTLEMENT ================= */
 
-function Placecut({ view, code, client, toast, exporting, onExport, onExit, onSettings, onAdmin, onBorrow }: {
-  view: PlayerView; code: string; client: RoomClient; toast: ToastFn; exporting: boolean; onExport: () => void; onExit: (m?: string) => void; onSettings: () => void; onAdmin: () => void; onBorrow: () => void;
+function Placecut({ view, exporting, onExport, onExit, onSettings, onAdmin, backAt, onLobby }: {
+  view: PlayerView; exporting: boolean; onExport: () => void; onExit: (m?: string) => void; onSettings: () => void; onAdmin: () => void;
+  /** When the screen goes back to the waiting room on its own (Placecut only). */
+  backAt: number | null; onLobby: () => void;
 }) {
+  useTicker(1000);
+  const backIn = backAt ? Math.max(0, Math.ceil((backAt - Date.now()) / 1000)) : 0;
   const ended = view.phase === 'ended';
   const card = view.scorecard;
   const me = view.players[view.you];
   const rows = card ? [...card.rows].sort((a, b) => b.net - a.net) : [];
   const [open, setOpen] = useState<string | null>(null);
   const g = card?.results[0];
-  const wcNext = false;
   return (
     <section className="screen" id="lobby" aria-label={ended ? 'Final settlement' : 'Settlement'}>
       <div className="bar">
@@ -552,23 +585,12 @@ function Placecut({ view, code, client, toast, exporting, onExport, onExit, onSe
         )}
       </div>
       <p className="rule-note">{ended ? 'The tournament is over. Net = balance − 100 starting coins − bank loan − owed to players + owed by players. Coins have no cash value.'
-        : wcNext ? `Well Cut game ${view.wellCut.game} of 4 is next. Nobody joins or leaves until the four Well Cut games are done.`
-        : 'Placecut is only a break: nothing resets. Balances, loans and totals carry into the next 20 minutes. New players can join now, and anyone can leave.'}</p>
-      {!ended && !wcNext && <InviteCard code={code} toast={toast} />}
-      {!ended && view.options.borrow && (
-        <button className="btn line borrow-cta" onClick={() => { play('tap'); onBorrow(); }}><Icon name="bank" />{view.myRequest ? `Waiting for ${view.players[view.myRequest.to]?.name}…` : 'Borrow from a player'}</button>
-      )}
+        : 'Placecut is only a break: nothing resets. Balances, loans and totals carry into the next 20 minutes. In the waiting room new players can join and anyone can leave.'}</p>
       <div className="lobby-actions" style={{ gridTemplateColumns: view.isAdmin ? '1fr 1.4fr' : '1fr' }}>
-        {view.isAdmin
-          ? <>
-            <button className="btn line" disabled={exporting} onClick={onExport}><Icon name="file" />{exporting ? 'Making PDF…' : 'Export PDF'}</button>
-            {ended
-              ? <button className="btn gold" onClick={() => onExit()}>Back to home</button>
-              : <button className="btn gold" disabled={!view.options.startGame} onClick={() => { client.send({ t: 'start_game' }); buzz(HAP.click); }}>Start next 20 minutes</button>}
-          </>
-          : ended
-            ? <button className="btn gold" onClick={() => onExit()}>Back to home</button>
-            : <button className="btn line" disabled={!view.options.leave} onClick={() => { client.send({ t: 'leave' }); }}>{wcNext ? 'Leave after the Well Cut' : 'Leave the room'}</button>}
+        {view.isAdmin && <button className="btn line" disabled={exporting} onClick={onExport}><Icon name="file" />{exporting ? 'Making PDF…' : 'Export PDF'}</button>}
+        {ended
+          ? <button className="btn gold" onClick={() => onExit()}>Back to home</button>
+          : <button className="btn gold" onClick={() => { play('tap'); onLobby(); }}>Waiting room{backIn ? ` (${backIn})` : ''}</button>}
       </div>
     </section>
   );
@@ -627,19 +649,19 @@ function AdminSheet({ open, view, client, exporting, onExport, onClose }: { open
 
 function Table({ view, code, client, quality, dealing, dealRound, landed, frozen, onSheet, onReact, onSettings }: { view: PlayerView; code: string; client: RoomClient; quality: { q: Quality; rtt: number }; dealing: boolean; dealRound: { r: number; of: number } | null; landed: number; frozen: Frozen; onSheet: (s: Sheet) => void; onReact: (seat: number) => void; onSettings: () => void }) {
   useTicker(1000);
-  const W = useLandscape();
+  const H = useTableFrame();
   const you = view.you, n = view.players.length;
   const me = view.players[you];
   const cardsVisible = (view.phase === 'betting' || view.phase === 'game_over') && !dealing;
   const o = view.options;
   const now = client.serverNow();
-  const seatPos = (i: number) => posFor((i - you + n) % n, n, W);
-  const pilePos = (i: number) => { if (i === you) return { x: W / 2 - 96, y: 286 }; const p = seatPos(i); return p ? toward(p, W, 0.45, 62, 150) : null; };
+  const seatPos = (i: number) => posFor((i - you + n) % n, n, H);
+  const pilePos = (i: number) => { if (i === you) return { x: CX - 62, y: H - RAIL_BOTTOM - 48 }; const p = seatPos(i); if (!p) return null; const q = toward(p, H, 0.3, 52, 78); return Math.abs(p.x - CX) > 90 ? { x: q.x, y: q.y + 32 } : q; };
   // the dealer button sits just inside the dealer's seat
   const dealerAt = (() => {
-    if (view.dealer === you) return { x: W / 2 - 150, y: 318 };
+    if (view.dealer === you) return { x: CX + 64, y: H - RAIL_BOTTOM - 46 };
     const p = seatPos(view.dealer); if (!p) return { x: -50, y: -50 };
-    const q = toward(p, W, 0.22, 44, 70); return { x: q.x + (q.x > W / 2 ? -24 : 24), y: q.y };
+    const q = toward(p, H, 0.22, 44, 64); return { x: q.x, y: q.y + 30 };
   })();
   const piles = view.phase === 'shuffling' || view.phase === 'cutting' || view.phase === 'dealing' || view.phase === 'betting';
 
@@ -691,7 +713,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
           ? <button className={`icon-btn${view.callOff ? ' on' : ''}`} aria-label="Admin controls" onClick={() => { play('tap'); onSheet('admin'); }}><Icon name="crown" /></button>
           : <button className="icon-btn" aria-label="Settings" onClick={onSettings}><Icon name="sliders" /></button>}
       </div>
-      <div id="table-area" className={n > 7 ? 'many' : undefined}>
+      <div id="table-area" className={n > 7 ? 'many' : undefined} style={{ ['--cy' as string]: `${geo(H).cy}px` }}>
         <div className="rail" /><div className="felt"><span className="felt-logo">DANKA CLUB</span></div>
         <div className="center">
           <div className="pot-row">
@@ -710,7 +732,7 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
         </div>
         {view.players.map((s, i) => {
           if (i === you) return null;
-          const k = (i - you + n) % n, pos = posFor(k, n, W);
+          const k = (i - you + n) % n, pos = posFor(k, n, H);
           if (!pos) return null;
           const cls = ['seat', pos.s, view.turn === i && view.phase === 'betting' ? 'turn' : '', s.status === 'packed' ? 'packed' : '', s.status === 'eliminated' ? 'packed out' : '', s.seen && s.status === 'in' ? 'seen-st' : ''].join(' ');
           return (
@@ -749,8 +771,8 @@ function Table({ view, code, client, quality, dealing, dealRound, landed, frozen
           {me && <Tag s={me} />}</div>
         </div>
         <div className="me-cards">
-          <div className="hand-name">{view.yourHand ?? (view.phase === 'betting' && cardsVisible && me?.status === 'in' && !me.seen ? 'Drag up to squeeze' : '')}</div>
-          <MyCards view={view} visible={cardsVisible} landed={dealing ? landed : -1} onSee={() => { if (o.see) bet('see'); }} />
+          <div className="hand-name">{view.yourHand ?? ''}</div>
+          <MyCards view={view} visible={cardsVisible} landed={dealing ? landed : -1} />
         </div>
       </div>
       {o.loan && <button className="bank-btn" onClick={() => { play('tap'); onSheet('loan'); }}><Icon name="bank" /><span>{me?.loan ? `Owe ${fmt(me.loan)}` : 'Bank'}</span></button>}
@@ -866,50 +888,20 @@ function CutBarPanel({ bar, frozen, isCutter, cutterName, dealerName, serverNow,
   );
 }
 
-/* ---------- my cards: squeeze or double-tap to see ---------- */
-function MyCards({ view, visible, landed, onSee }: { view: PlayerView; visible: boolean; landed: number; onSee: () => void }) {
+/* ---------- my cards: face down until you press See ---------- */
+function MyCards({ view, visible, landed }: { view: PlayerView; visible: boolean; landed: number }) {
+  // No squeeze or peek: a Blind player's cards stay face down (the server doesn't even send them)
+  // until they press See and become Seen.
   const me = view.players[view.you];
   const cards = me?.cards ?? [];
-  const count = Math.max(cards.length, view.cardsEach || 3);
-  const area = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ y0: number; p: number; step: number; lastTap: number }>({ y0: NaN, p: 0, step: 0, lastTap: 0 });
-  const seen = !!me?.seen;
-
-  const flips = () => Array.from(area.current?.querySelectorAll<HTMLElement>('.flip') ?? []);
-  useEffect(() => { if (seen) flips().forEach((f) => { f.classList.remove('dragging'); f.style.transform = ''; }); }, [seen]);
-
-  const down = (e: React.PointerEvent) => {
-    if (!visible || !cards.length || me?.status !== 'in') return;
-    drag.current.y0 = toLocal(e.clientX, e.clientY).y; drag.current.p = 0; drag.current.step = 0;
-    area.current?.setPointerCapture(e.pointerId);
-    if (!seen) flips().forEach((f) => f.classList.add('dragging'));
-  };
-  const move = (e: React.PointerEvent) => {
-    const d = drag.current;
-    if (Number.isNaN(d.y0) || seen) return;
-    d.p = Math.max(0, Math.min(1, -(toLocal(e.clientX, e.clientY).y - d.y0) / 130));
-    flips().forEach((f, k) => { const pk = Math.max(0, Math.min(1, d.p * 1.15 - k * 0.07)); f.style.transform = `translateY(${-pk * 14}px) rotateX(${180 - 180 * pk}deg)`; });
-    const step = Math.floor(d.p * 10);
-    if (step !== d.step) { d.step = step; if (step > 0) { buzz(HAP.peek); play('creak'); } }
-  };
-  const up = (e: React.PointerEvent) => {
-    const d = drag.current;
-    if (Number.isNaN(d.y0)) return;
-    const dy = toLocal(e.clientX, e.clientY).y - d.y0; d.y0 = NaN;
-    const now = performance.now();
-    if (Math.abs(dy) < 8) { if (now - d.lastTap < 320 && !seen) { onSee(); buzz(HAP.click); } d.lastTap = now; }
-    if (!seen) {
-      if (d.p >= 0.35) { onSee(); buzz(HAP.click); }
-      else flips().forEach((f) => { f.classList.remove('dragging'); f.style.transform = ''; });
-    }
-  };
-
+  const held = me?.cardCount ?? 0;
+  const count = Math.max(held, view.cardsEach || 3);
+  const up = !!me?.seen && cards.length > 0;
   return (
-    <div id="my-cards" ref={area} className={`n${count}`} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
-      aria-label="Your cards. Drag up to squeeze or double-tap to see them.">
+    <div id="my-cards" className={`n${count}`} aria-label={up ? 'Your cards' : 'Your cards, face down. Press See to look at them.'}>
       {Array.from({ length: count }, (_, k) => (
-        <div key={k} className={`pc${(visible || k < landed) && cards[k] ? '' : ' empty'}`}>
-          <div className={`flip${seen ? ' up' : ''}`}>
+        <div key={k} className={`pc${(visible || k < landed) && k < held ? '' : ' empty'}`}>
+          <div className={`flip${up ? ' up' : ''}`}>
             {cards[k] && <CardFace code={cards[k]} />}
             <div className="bk back" />
           </div>

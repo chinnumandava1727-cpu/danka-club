@@ -24,7 +24,8 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   once, recorded separately in the ledger. A player short of it borrows it from the bank automatically.
 - **Dealing:** cards are dealt one per player per round starting with the player on the dealer's **right** and going
   the same way round, ending with the dealer, in every game. Betting still starts on the dealer's left.
-- Blind costs 1, Seen costs 2. Seeing your cards makes you Seen. Pack any time on your turn.
+- Blind costs 1, Seen costs 2. Seeing your cards makes you Seen. There is no peeking: a Blind player's phone is not
+  even sent their cards until they press See. Pack any time on your turn.
 - **Blind/Seen rotation:** before anyone in a game has played Seen, Blind is unrestricted and nobody is forced to
   open their cards. After the first Seen (3+ active), a Blind bet forces the next active player to play Seen; if that
   player folds, the next active player must play Seen. With only two players left the restriction and the
@@ -48,8 +49,9 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
 - Bonus N×(N−1), only when the holder wins the game: Three of a Kind in normal 3-card games, Four of a Kind in Well Cut game 1.
 - **Tournament:** the admin starts a 20-minute period (server clock). Games follow one another; after each game its
   settlement is shown and the admin starts the next game. When the 20 minutes are up, the game in progress finishes
-  (a Well Cut sequence too) and **Placecut** opens: settlement scorecards, players may join (100 coins) or leave, and
-  the admin starts the next 20 minutes. Nothing ever resets: balances, totals, bonuses, bank and player loans (each
+  (a Well Cut sequence too) and **Placecut** opens: everyone sees the settlement scorecards, then goes back to the
+  waiting room (after 25 s, or sooner with a tap), where players may join (100 coins) or leave and the admin starts the
+  next 20 minutes. Nothing ever resets: balances, totals, bonuses, bank and player loans (each
   recorded with lender, borrower, amount, game and time), settlements and the full history carry forward until the
   admin calls off the tournament (the current game finishes first).
 - **Play with computer:** Home → Play with computer seats 1–9 computer players at once (solo play). The admin can

@@ -1,6 +1,6 @@
 // Imperative animation layer: chips, flying cards, throwables and bursts drawn above the table.
 import { settings } from './settings';
-import { toLocal } from './landscape';
+import { toLocal } from './tableFrame';
 
 const layer = () => document.getElementById('fx')!;
 

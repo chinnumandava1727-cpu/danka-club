@@ -1156,7 +1156,8 @@ export function viewFor(st: State, uid: string): PlayerView {
     rules: { blind: st.rules.blindCost, seen: st.rules.seenCost, sideshow: st.rules.sideshowCost, maxLoan: st.rules.maxLoan, startingCoins: st.rules.startingCoins, extraBlinds: st.rules.extraBlindActions, turnSeconds: st.rules.turnSeconds, wellCutZone: st.rules.wellCutZone },
     players: st.players.map((p, i) => ({
       name: p.name, coins: p.coins, loan: p.loan, status: p.status, seen: p.seen, connected: p.connected, bot: isBotUid(p.uid),
-      cardCount: p.cards.length, cards: i === me || shown.includes(i) ? p.cards.map(cardCode) : null,
+      // A Blind player's phone never receives their own cards: only after See (or once the game is over).
+      cardCount: p.cards.length, cards: (i === me && (p.seen || over)) || shown.includes(i) ? p.cards.map(cardCode) : null,
       isAdmin: p.uid === st.adminUid, isDealer: i === d,
       extraBlindsLeft: st.phase === 'betting' && onlyBlindLeft(st, i) ? Math.max(0, st.rules.extraBlindActions - p.extraBlinds) : null,
       owes: owesPlayers(st, p.uid), owed: owedByPlayers(st, p.uid), put: p.contributed,

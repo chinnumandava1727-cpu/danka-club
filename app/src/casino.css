@@ -1,0 +1,92 @@
+/* ============ Upright "Classic Casino" table ============
+   #app.casino is a fixed 430px-wide frame (height 740–960, see lib/tableFrame.ts) scaled to the screen.
+   Everything here is in those design pixels. Black padded rail, wood racetrack, green baize. */
+#app.casino{position:fixed; left:0; top:0; overflow:clip; max-width:none; margin:0; border:0; border-radius:0; box-shadow:none; transform-origin:0 0;
+  background:radial-gradient(90% 70% at 50% 40%, #2C2618 0%, #14110B 58%, #070604 100%)}
+#app.casino #table{background:transparent}
+
+/* rail, wood racetrack and baize: an upright stadium */
+.casino #table-area{position:absolute; inset:0; flex:none}
+.casino .rail{position:absolute; left:62px; right:62px; top:84px; bottom:226px; border-radius:153px;
+  background:radial-gradient(140% 120% at 30% 20%, #3A3A3E, #161618 55%, #0A0A0B);
+  box-shadow:0 26px 55px rgba(0,0,0,.75), inset 0 2px 1px rgba(255,255,255,.18), inset 0 -4px 8px rgba(0,0,0,.6)}
+.casino .rail::before{content:''; position:absolute; inset:5px; border-radius:inherit; border:1.5px dashed rgba(255,255,255,.12)}
+.casino .rail::after{content:''; position:absolute; inset:12px; border-radius:141px; border:7px solid; border-color:#9A6232 #6B3F1F #4E2C14 #6B3F1F; box-shadow:inset 0 0 0 1px rgba(0,0,0,.5), 0 0 0 1px rgba(0,0,0,.6)}
+#app.casino .felt{position:absolute; inset:auto; left:81px; right:81px; top:103px; bottom:245px; border-radius:134px; overflow:hidden;
+  background:radial-gradient(110% 75% at 35% 30%, #2E9152 0%, #1D6738 45%, #0F3F21 100%); box-shadow:inset 0 0 45px rgba(0,0,0,.6)}
+#app.casino .felt::before{inset:20px; border-radius:114px; border:2px solid rgba(255,214,120,.35)}
+#app.casino .felt::after{display:none}
+.casino .felt-logo{position:absolute; left:50%; bottom:46px; transform:translateX(-50%); font:800 15px var(--display); letter-spacing:.3em; color:rgba(255,214,120,.16); white-space:nowrap}
+:root[data-table="maroon"] #app.casino .felt{background:radial-gradient(110% 75% at 35% 30%, #8A2A3A 0%, #5A1E2A 45%, #3B111B 100%)}
+
+/* top bar: leave + room code on the left, tools on the right */
+#app.casino .topbar{position:absolute; left:0; right:0; top:0; height:56px; background:none; z-index:20; pointer-events:none}
+#app.casino .topbar > *{pointer-events:auto}
+#app.casino .topbar .signal{margin-left:auto}
+#app.casino .topbar .icon-btn{background:rgba(18,28,46,.85); border:1px solid rgba(255,255,255,.08)}
+
+/* centre: deck and pot side by side, then stake, Well Cut, clock and status */
+#app.casino .center{left:50%; top:var(--cy, 400px); gap:6px; z-index:4; width:240px}
+.casino .pot-row{display:flex; align-items:center; gap:12px}
+#app.casino #deck{width:44px; height:62px}
+#app.casino .pot{flex-direction:row; gap:8px; padding:4px 14px 4px 12px; background:rgba(5,9,16,.72); border-color:rgba(226,184,101,.55); box-shadow:0 4px 14px rgba(0,0,0,.4)}
+#app.casino .pot b{font-size:22px}
+#app.casino .stake{font-size:10.5px}
+#app.casino .stake .fp{font-size:10px}
+#app.casino .deal-prompt{min-height:0; font-size:12px}
+#app.casino .deal-prompt:empty{display:none}
+#app.casino .center .hand-no{order:9; margin:0; display:flex; align-items:center; gap:5px; padding:2px 10px; border-radius:999px; background:rgba(5,9,16,.5); font-size:11px; color:rgba(245,239,227,.8); font-weight:700}
+#app.casino .status-line{max-width:200px; padding:5px 12px; border-radius:14px; background:rgba(5,9,16,.66); color:var(--ivory); font-size:12px; font-weight:700; line-height:1.35; text-align:center}
+#app.casino .status-line:empty{display:none}
+#app.casino .status-line.mine{color:#1A1206; background:linear-gradient(135deg,#FFC64D,#F4A300)}
+
+/* seats on the rail */
+#app.casino .seat{width:92px; gap:0; z-index:6}
+#app.casino .av-wrap{width:52px; height:52px}
+#app.casino .av{width:44px; height:44px; font-size:15px; border:2.5px solid rgba(255,255,255,.9); box-shadow:0 4px 10px rgba(0,0,0,.55)}
+.casino .plate{margin-top:3px; min-width:82px; padding:2px 7px 3px; border-radius:10px; text-align:center; background:linear-gradient(180deg,#1C1C1F,#0B0B0C); border:1px solid rgba(226,184,101,.55)}
+#app.casino .seat .nm{font-size:11.5px; max-width:80px; margin:0 auto}
+#app.casino .seat .co{font-size:13px}
+#app.casino .seat .tag{position:absolute; top:-8px; left:50%; transform:translateX(-50%); z-index:3; white-space:nowrap; font-size:9px; padding:1px 6px}
+#app.casino .seat.turn .plate{border-color:var(--marigold); box-shadow:0 0 12px rgba(244,163,0,.45)}
+#app.casino .seat .minis{top:8px; height:28px}
+#app.casino .seat.sl .minis{left:68px; right:auto} #app.casino .seat.sr .minis{right:68px; left:auto}
+#app.casino .mini{width:18px; height:26px}
+#app.casino #table-area.many .seat{width:80px}
+#app.casino #table-area.many .av-wrap{width:44px; height:44px}
+#app.casino #table-area.many .av{width:38px; height:38px; font-size:13px}
+#app.casino #table-area.many .plate{min-width:72px}
+#app.casino #table-area.many .seat .nm{max-width:68px}
+#app.casino #table-area.many .seat.sl .minis{left:58px} #app.casino #table-area.many .seat.sr .minis{right:58px}
+
+/* coins each player has put in this game, poker style */
+.casino .pile-at{position:absolute; transform:translate(-50%,-50%); display:flex; align-items:center; gap:4px; z-index:5; pointer-events:none; min-width:4px; min-height:4px}
+.casino .pile{position:relative; width:18px; height:24px}
+.casino .pile i{position:absolute; left:0; width:18px; height:7px; border-radius:50%; border:1px solid rgba(255,255,255,.85); box-shadow:0 1px 0 rgba(0,0,0,.5)}
+.casino .pile i:nth-child(3n+1){background:#C8102E} .casino .pile i:nth-child(3n+2){background:#1F5FBF} .casino .pile i:nth-child(3n){background:#E2B865}
+.casino .pile-at b{font:800 11.5px var(--display); padding:1px 6px; border-radius:8px; background:rgba(0,0,0,.6); color:#FFF1C9}
+
+/* you, below the table: avatar and coins on the left, cards in the middle, bank on the right */
+#app.casino .me{position:absolute; left:0; right:0; bottom:78px; height:150px; padding:0; display:block; z-index:8}
+#app.casino .me-left{left:10px; bottom:4px; width:auto; flex-direction:row; align-items:center; gap:6px}
+#app.casino .me-left .av-wrap{width:56px; height:56px}
+#app.casino .me-left .av{width:48px; height:48px; font-size:16px}
+.casino .me-info{display:flex; flex-direction:column; align-items:flex-start; gap:2px}
+.casino .me-info b{font-size:12px; max-width:64px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#app.casino .me-info .co{font-size:17px}
+.casino .me-cards{position:absolute; left:50%; bottom:0; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center}
+#app.casino .hand-name{font-size:14px; color:var(--marigold); text-shadow:0 2px 6px #000; min-height:18px; white-space:nowrap}
+#app.casino #my-cards{height:118px; cursor:default; touch-action:auto}
+#app.casino .bank-btn{position:absolute; right:12px; bottom:86px; z-index:20; height:50px; min-width:62px; flex-direction:column; justify-content:center; gap:1px; border-radius:14px; font:800 12.5px var(--display); padding:0 10px}
+#app.casino .bank-btn svg{width:18px; height:18px}
+
+/* action buttons along the bottom */
+#app.casino .actions{position:absolute; left:0; right:0; bottom:0; z-index:20; padding:8px 10px 12px}
+#app.casino #dealer-btn{z-index:7}
+
+/* the Well Cut timing bar sits over the middle of the table */
+#app.casino .cutbar-panel{top:var(--cy, 400px)}
+#app.casino .cb-bar{height:230px}
+
+/* bigger suits on smaller cards: keep the big suit clear of the corner */
+#my-cards.n4 .cf .cbig{font-size:40px}
