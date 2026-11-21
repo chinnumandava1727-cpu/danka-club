@@ -42,7 +42,6 @@ const toward = (p: { x: number; y: number }, H: number, f: number, lo: number, h
   return { x: p.x + (dx / L) * d, y: p.y + (dy / L) * d };
 };
 const pileHTML = (v: number) => Array.from({ length: Math.min(7, Math.ceil(v / 2)) }, (_, k) => <i key={k} style={{ bottom: k * 3 }} />);
-const SETTLE_MS = 25_000;
 const ini = (name: string) => name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '?';
 const fmt = (n: number) => n.toLocaleString('en-IN');
 const sgn = (n: number) => (n > 0 ? `+${fmt(n)}` : fmt(n));
@@ -82,15 +81,11 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
   const [view, setView] = useState<PlayerView | null>(null);
   const [status, setStatus] = useState<Status>('connecting');
   const [sheet, setSheet] = useState<Sheet>(null);
-  // After a Placecut everyone sees the settlement, then goes back to the waiting room (balances carry forward).
-  const [settleAt, setSettleAt] = useState<number | null>(null);
+  // When the 20 minutes are up everyone goes straight back to the waiting room (scores carry forward);
+  // the Placecut settlement opens from there.
+  const [settleOpen, setSettleOpen] = useState(false);
   const phase = view?.phase;
-  useEffect(() => { setSettleAt(phase === 'placecut' ? Date.now() + SETTLE_MS : null); }, [phase]);
-  useEffect(() => {
-    if (settleAt === null) return;
-    const t = setTimeout(() => setSettleAt(0), Math.max(0, settleAt - Date.now()));
-    return () => clearTimeout(t);
-  }, [settleAt]);
+  useEffect(() => { setSettleOpen(false); }, [phase]);
   const [dealing, setDealing] = useState(false);
   /** §4 Round-by-round deal on screen: which card round is flying, and how many rounds have landed. */
   const [dealRound, setDealRound] = useState<{ r: number; of: number } | null>(null);
@@ -140,7 +135,7 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
       setStatus(s);
       if (s === 'rejected') onExit(detail?.message ?? 'Could not join that room.');
       if (s === 'replaced') onExit('This table is open on another phone or tab.');
-      if (s === 'left') onExit();
+      if (s === 'left') onExit(detail?.code === 'removed' ? 'The admin removed you from the room. Your scores stay in the settlement.' : undefined);
       if (s === 'closed') onExit('The admin closed the room.');
     }, (q, rtt) => setQuality({ q, rtt }));
     client.current = c;
@@ -185,7 +180,10 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
         case 'left': toast(`${e.name} left the table`); break;
         case 'period': play('gong'); buzz(HAP.rise); showBanner({ kind: 'round', title: `${Math.max(1, Math.round((e.endsAt - Date.now()) / 60000))} minutes`, sub: `Period ${e.round} · Placecut when the clock runs out` }, 2200); break;
         case 'start': play('chime'); setSheet((s) => (s === 'result' ? null : s)); break;
-        case 'game': if (e.wellCutGame) { play('chime'); showBanner({ kind: 'wellcut', title: `Well Cut · game ${e.wellCutGame} of 4`, sub: `${e.cardsEach} card${e.cardsEach === 1 ? '' : 's'} each` }, 2200); } break;
+        case 'game':
+          if (e.forced) { play('fanfare', true); buzz(HAP.win); showBanner({ kind: 'wellcut', title: 'WELL CUT!', sub: '10 minutes in: compulsory Well Cut games of 4, 3, 2 and 1 cards, starting now' }, 3400); }
+          else if (e.wellCutGame) { play('chime'); showBanner({ kind: 'wellcut', title: `Well Cut · game ${e.wellCutGame} of 4`, sub: `${e.cardsEach} card${e.cardsEach === 1 ? '' : 's'} each` }, 2200); }
+          break;
         case 'opening':
           // everyone's compulsory opening coin goes in at the start of the game
           e.seats.forEach((s, k) => setTimeout(() => chip(centerOf(seatAvatar(s)), centerOf(document.querySelector(`[data-pile="${s}"]`) ?? potEl())), k * 70));
@@ -375,11 +373,11 @@ export function Room({ me, code, toast, onExit, onSettings }: { me: Me; code: st
   );
 
   const lobby = <Lobby view={view} code={code} client={send} toast={toast} onExit={onExit} onSettings={onSettings} onAdmin={() => setSheet('admin')}
-    onSettlement={() => setSettleAt(Date.now() + SETTLE_MS)} onBorrow={() => setSheet('loan')} />;
-  if (view.phase === 'lobby' || (view.phase === 'placecut' && !settleAt)) return <>{lobby}{adminSheet}{offlineBanner}</>;
+    onSettlement={() => setSettleOpen(true)} onBorrow={() => setSheet('loan')} />;
+  if (view.phase === 'lobby' || (view.phase === 'placecut' && !settleOpen)) return <>{lobby}{adminSheet}{offlineBanner}</>;
   if (view.phase === 'placecut' || view.phase === 'ended') {
     return <><Placecut view={view} exporting={exporting} onExport={exportPdf} onExit={onExit} onSettings={onSettings} onAdmin={() => setSheet('admin')}
-      backAt={view.phase === 'placecut' ? settleAt : null} onLobby={() => setSettleAt(0)} />{adminSheet}{offlineBanner}</>;
+      onLobby={() => setSettleOpen(false)} />{adminSheet}{offlineBanner}</>;
   }
 
   return (
@@ -434,6 +432,7 @@ function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin, onSettl
   const size = view.tableSize;
   const full = n >= size;
   const setSize = (v: number) => { client.send({ t: 'size', size: v }); play('tick'); buzz(HAP.tick); };
+  const [removing, setRemoving] = useState<number | null>(null);
   return (
     <section className="screen" id="lobby" aria-label="Waiting room">
       <div className="bar">
@@ -470,13 +469,15 @@ function Lobby({ view, code, client, toast, onExit, onSettings, onAdmin, onSettl
               <span className="who"><b>{i === view.you ? `${s.name} (you)` : s.name}</b>
                 <span className="badges">{s.isAdmin && <span className="badge">Admin</span>}{s.bot && <span className="badge cpu">Computer</span>}{s.isDealer && <span className="badge deal">{after ? 'Deals next' : 'Deals game 1'}</span>}{!s.connected && <span className="badge">Offline</span>}</span></span>
               <span className="ready ok num">{fmt(s.coins)}{s.loan ? <small className="owe"> −{fmt(s.loan)}</small> : null}</span>
-              {isAdmin && s.bot && <button className="rm-bot" aria-label={`Remove ${s.name}`} onClick={() => { client.send({ t: 'remove_bot', seat: i }); play('tap'); }}>×</button>}
+              {isAdmin && i !== view.you && (removing === i
+                ? <button className="rm-bot sure" onClick={() => { client.send({ t: 'remove_bot', seat: i }); setRemoving(null); play('tap'); buzz(HAP.thud); }}>Remove</button>
+                : <button className="rm-bot" aria-label={`Remove ${s.name}`} onClick={() => { if (s.bot) { client.send({ t: 'remove_bot', seat: i }); play('tap'); } else { setRemoving(i); buzz(HAP.tick); } }}>×</button>)}
             </div>
           );
         })}
       </div>
       <p className="rule-note">{after
-        ? 'Every score carries forward: balances, bank loans, player loans and totals. New players can join now with ' + view.rules.startingCoins + ' coins, and anyone can leave.'
+        ? `The 20 minutes are up. Every score carries forward into the next Placecut: balances, bank loans, player loans and totals, until the admin calls off the tournament. New players can join now with ${view.rules.startingCoins} coins, and anyone can leave${isAdmin ? ' or be removed (×)' : ''}.`
         : `Everyone starts with ${view.rules.startingCoins} coins. The admin deals game 1, then each winner deals. Every 20 minutes, after the game in progress, there is a Placecut: settlement, and players can join or leave.`}</p>
       {after && view.options.borrow && (
         <button className="btn line borrow-cta" onClick={() => { play('tap'); onBorrow(); }}><Icon name="bank" />{view.myRequest ? `Waiting for ${view.players[view.myRequest.to]?.name}…` : 'Borrow from a player'}</button>
@@ -513,13 +514,9 @@ function InviteCard({ code, toast }: { code: string; toast: ToastFn }) {
 
 /* ================= PLACECUT / SETTLEMENT ================= */
 
-function Placecut({ view, exporting, onExport, onExit, onSettings, onAdmin, backAt, onLobby }: {
-  view: PlayerView; exporting: boolean; onExport: () => void; onExit: (m?: string) => void; onSettings: () => void; onAdmin: () => void;
-  /** When the screen goes back to the waiting room on its own (Placecut only). */
-  backAt: number | null; onLobby: () => void;
+function Placecut({ view, exporting, onExport, onExit, onSettings, onAdmin, onLobby }: {
+  view: PlayerView; exporting: boolean; onExport: () => void; onExit: (m?: string) => void; onSettings: () => void; onAdmin: () => void; onLobby: () => void;
 }) {
-  useTicker(1000);
-  const backIn = backAt ? Math.max(0, Math.ceil((backAt - Date.now()) / 1000)) : 0;
   const ended = view.phase === 'ended';
   const card = view.scorecard;
   const me = view.players[view.you];
@@ -590,7 +587,7 @@ function Placecut({ view, exporting, onExport, onExit, onSettings, onAdmin, back
         {view.isAdmin && <button className="btn line" disabled={exporting} onClick={onExport}><Icon name="file" />{exporting ? 'Making PDF…' : 'Export PDF'}</button>}
         {ended
           ? <button className="btn gold" onClick={() => onExit()}>Back to home</button>
-          : <button className="btn gold" onClick={() => { play('tap'); onLobby(); }}>Waiting room{backIn ? ` (${backIn})` : ''}</button>}
+          : <button className="btn gold" onClick={() => { play('tap'); onLobby(); }}>Back to the waiting room</button>}
       </div>
     </section>
   );

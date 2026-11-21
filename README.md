@@ -23,7 +23,8 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
 - **Opening coin:** at the start of every game (Well Cut games too) each player in the game puts 1 coin into the pot,
   once, recorded separately in the ledger. A player short of it borrows it from the bank automatically.
 - **Dealing:** cards are dealt one per player per round starting with the player on the dealer's **right** and going
-  the same way round, ending with the dealer, in every game. Betting still starts on the dealer's left.
+  the same way round, ending with the dealer, in every game. Play goes the same way: the player on the dealer's right
+  acts first and turns pass to the right. The player on the dealer's left still cuts.
 - Blind costs 1, Seen costs 2. Seeing your cards makes you Seen. There is no peeking: a Blind player's phone is not
   even sent their cards until they press See. Pack any time on your turn.
 - **Blind/Seen rotation:** before anyone in a game has played Seen, Blind is unrestricted and nobody is forced to
@@ -37,7 +38,9 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
   compared privately, weaker hand folds.
 - **Well Cut timing bar.** The system shuffles; then a slider runs up and down a bar on every phone. The player on
   the **dealer's left** taps STOP (the dealer only deals); stopping within 1.5% of the middle (the gold line) is a **Well Cut**: the game being cut is played
-  as normal, and the four compulsory games of 4, 3, 2 and 1 cards start with the next game (everyone is told at once). The slider is fastest through the middle, changes speed every pass (crypto random) and speeds up, so it
+  as normal, and the four compulsory games of 4, 3, 2 and 1 cards start with the next game (everyone is told at once).
+  **Compulsory Well Cut:** 10 minutes into each 20-minute period, the next new game starts the 4, 3, 2, 1 sequence
+  (no cut), unless that period has already had a Well Cut. The slider is fastest through the middle, changes speed every pass (crypto random) and speeds up, so it
   can't be learned: about 3–5 Well Cuts per 80 games. The server accepts a stop time only from the last 0.25 s before
   the tap arrived.
 - Ranking follows the group's Local Card Rules (`packages/engine/src/hands.ts`):
@@ -49,9 +52,9 @@ the state machine is `packages/engine/src/danka.ts`; hand comparisons are `packa
 - Bonus N×(N−1), only when the holder wins the game: Three of a Kind in normal 3-card games, Four of a Kind in Well Cut game 1.
 - **Tournament:** the admin starts a 20-minute period (server clock). Games follow one another; after each game its
   settlement is shown and the admin starts the next game. When the 20 minutes are up, the game in progress finishes
-  (a Well Cut sequence too) and **Placecut** opens: everyone sees the settlement scorecards, then goes back to the
-  waiting room (after 25 s, or sooner with a tap), where players may join (100 coins) or leave and the admin starts the
-  next 20 minutes. Nothing ever resets: balances, totals, bonuses, bank and player loans (each
+  (a Well Cut sequence too) and **Placecut** opens: everyone goes straight back to the waiting room, where players may
+  join (100 coins) or leave, the admin may add or remove players, the Placecut settlement can be opened, and the admin
+  starts the next 20 minutes. Placecuts keep coming every 20 minutes like a tournament until the admin calls it off. Nothing ever resets: balances, totals, bonuses, bank and player loans (each
   recorded with lender, borrower, amount, game and time), settlements and the full history carry forward until the
   admin calls off the tournament (the current game finishes first).
 - **Play with computer:** Home → Play with computer seats 1–9 computer players at once (solo play). The admin can

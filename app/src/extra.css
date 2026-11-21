@@ -205,3 +205,4 @@ button.chip-tag b{color:var(--ivory)}
 .rm-bot{margin-left:6px; width:28px; height:28px; border-radius:8px; border:1px solid var(--line); background:var(--night); color:var(--muted); font:700 16px/1 var(--body)}
 .settle-cta{width:100%; height:44px; margin-top:8px}
 .lrow .owe{font-size:11px; color:var(--seen); font-family:var(--body); margin-left:3px}
+.rm-bot.sure{width:auto; padding:0 10px; color:#fff; background:linear-gradient(135deg,#E5484D,#A32A2E); border-color:transparent; font-size:12px; font-weight:800}

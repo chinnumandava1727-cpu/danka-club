@@ -124,7 +124,7 @@ export class RoomClient {
       if (this.stopped) return;
       if (ev.code === 4000) return this.onStatus('rejected', rejection);
       if (ev.code === 4001) return this.onStatus('replaced');
-      if (ev.code === 4002) return this.onStatus('left');
+      if (ev.code === 4002) return this.onStatus('left', ev.reason === 'removed' ? { code: 'removed', message: ev.reason } : undefined);
       if (ev.code === 4003) return this.onStatus('closed');
       this.scheduleReconnect();
     };

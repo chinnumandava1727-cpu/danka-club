@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import {
   type GameEvent, type Scorecard, type State, type Tx, DANKA_RULES, GameError, act, answerPlayerLoan, callOff, cancelPlayerLoan, commitmentInput, createRoom, cut, deal,
   isBotUid, newBot, nextBotTask, runBot,
-  deckString, freshDeck, join, leave, needsDeck, onDeadline, prepareDeck, randomHex, seatOf, sessionReport, setConnected, setTableSize,
+  deckString, freshDeck, join, leave, removePlayer, needsDeck, onDeadline, prepareDeck, randomHex, seatOf, sessionReport, setConnected, setTableSize,
   requestPlayerLoan, setTimer, sha256Hex, shuffle, startGame, takeLoan, viewFor,
 } from '@danka/engine';
 import { ROOM_TTL_MS } from './codes';
@@ -81,7 +81,7 @@ export class Room extends DurableObject<Env> {
     const now = Date.now();
     const rules = { ...DANKA_RULES, wellCutSequence: [...DANKA_RULES.wellCutSequence] };
     if (this.env.AUTH_MODE === 'dev') {
-      if (Number(this.env.DEV_ROUND_SECONDS) > 0) rules.roundMinutes = Number(this.env.DEV_ROUND_SECONDS) / 60;
+      if (Number(this.env.DEV_ROUND_SECONDS) > 0) { rules.roundMinutes = Number(this.env.DEV_ROUND_SECONDS) / 60; rules.forcedWellCutMinutes = rules.roundMinutes / 2; }
       if (Number(this.env.DEV_NEXT_GAME_SECONDS) > 0) rules.nextGameSeconds = Number(this.env.DEV_NEXT_GAME_SECONDS);
       if (Number(this.env.DEV_STARTING_COINS) > 0) rules.startingCoins = Number(this.env.DEV_STARTING_COINS);
       if (Number(this.env.DEV_MAX_LOAN) >= 0 && this.env.DEV_MAX_LOAN !== undefined) rules.maxLoan = Number(this.env.DEV_MAX_LOAN);
@@ -214,10 +214,15 @@ export class Room extends DurableObject<Env> {
           return this.commit(join(g, b.uid, b.name, now).events);
         }
         case 'remove_bot': {
-          if (me.uid !== g.adminUid) return this.send(ws, { t: 'error', code: 'not_admin', message: 'Only the admin can remove computer players.' });
+          // the admin removes a computer player, or (at Placecut / before the first period) a person
+          if (me.uid !== g.adminUid) return this.send(ws, { t: 'error', code: 'not_admin', message: 'Only the admin can remove players.' });
           const p = g.players[Number(msg.seat)];
-          if (!p || !isBotUid(p.uid)) return this.send(ws, { t: 'error', code: 'not_bot', message: 'That is not a computer player.' });
-          return this.commit(leave(g, p.uid, now));
+          if (!p) return this.send(ws, { t: 'error', code: 'no_player', message: 'That seat is empty.' });
+          if (isBotUid(p.uid)) return this.commit(leave(g, p.uid, now));
+          const events = removePlayer(g, me.uid, Number(msg.seat), now);
+          await this.commit(events);
+          for (const s of this.ctx.getWebSockets(p.uid)) { try { s.close(CLOSE.LEFT, 'removed'); } catch { /* already closed */ } }
+          return;
         }
         case 'call_off':
           return this.commit(callOff(g, me.uid, now));

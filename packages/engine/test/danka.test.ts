@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   DANKA_RULES, GameError, act, activeSeats, callOff, cardCode, commitmentInput, createRoom, cut, deal, dealOrder, deckString,
   freshDeck, join, leave, nextGame, onDeadline, parseCard, prepareDeck, setTimer, sha256Hex, shuffle, startGame, takeLoan,
-  viewFor, barPosition, cutterSeat, requestPlayerLoan, answerPlayerLoan, cancelPlayerLoan, type Card, type State,
+  viewFor, barPosition, cutterSeat, removePlayer, requestPlayerLoan, answerPlayerLoan, cancelPlayerLoan, type Card, type State,
 } from '../src';
 
 const NAMES = ['Rc', 'Srinu', 'Ravi', 'Kiran', 'Babji', 'Prasad', 'Naidu', 'Suresh', 'Venky', 'Murali'];
@@ -23,8 +23,10 @@ const expectCode = (fn: () => unknown, code: string) => {
   throw new Error(`expected ${code}`);
 };
 
-function room(n: number): State {
-  const st = createRoom({ rules: { ...DANKA_RULES, wellCutSequence: [...DANKA_RULES.wellCutSequence] }, admin: { uid: uid(0), name: NAMES[0] }, now });
+/** A room; the compulsory 10-minute Well Cut is off unless `forced` (it has its own tests). */
+function room(n: number, forced = false): State {
+  const rules = { ...DANKA_RULES, wellCutSequence: [...DANKA_RULES.wellCutSequence], ...(forced ? {} : { forcedWellCutMinutes: 1e9 }) };
+  const st = createRoom({ rules, admin: { uid: uid(0), name: NAMES[0] }, now });
   for (let i = 1; i < n; i++) join(st, uid(i), NAMES[i], now);
   return st;
 }
@@ -138,7 +140,7 @@ describe('rooms (tests 1, 3, 27, 31, 33)', () => {
     expectCode(() => leave(st, uid(1), now), 'round_in_progress');
     await shuffleIn(st);
     cutMiss(st); deal(st, uid(0), now);
-    a(st, 1, 'pack'); a(st, 2, 'pack');
+    finish(st);
     expectCode(() => join(st, 'late', 'Late', now), 'round_in_progress'); // a game ended, but no Placecut yet
     toPlacecut(st);
     expect(st.phase).toBe('placecut');
@@ -284,7 +286,7 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
     expect(st.players[0].cards[0]).toEqual(deck[3]);
     expect(st.players[3].cards[1]).toEqual(deck[4]);
     deal(st, uid(0), now);
-    expect(st.turn).toBe(1); // betting still starts on the dealer's left
+    expect(st.turn).toBe(3); // and play starts with the player on the dealer's right
   });
 
   it('9b. every Well Cut game is dealt from the dealer’s right too, whoever deals', async () => {
@@ -307,13 +309,85 @@ describe('dealing and the Well Cut (tests 6–9)', () => {
   it('4. the winner of every game becomes the next dealer', async () => {
     const st = room(3);
     await toBetting(st);
-    a(st, 1, 'pack'); a(st, 2, 'pack');
+    a(st, 2, 'pack'); a(st, 1, 'pack');
     expect(st.dealerUid).toBe(uid(0));
     next(st);
     await shuffleIn(st);
     cutMiss(st); deal(st, uid(0), now);
-    a(st, 1, 'pack'); a(st, 2, 'blind'); a(st, 0, 'pack');
+    a(st, 2, 'blind'); a(st, 1, 'pack'); a(st, 0, 'pack');
     expect(st.dealerUid).toBe(uid(2));
+  });
+});
+
+describe('compulsory Well Cut 10 minutes into every period', () => {
+  /** Play one whole game (Well Cut games have no cut). */
+  async function play(st: State) {
+    await shuffleIn(st);
+    if (st.phase === 'cutting') cutMiss(st);
+    deal(st, st.dealerUid, now);
+    finish(st);
+  }
+
+  it('the first new game after 10 minutes starts the 4, 3, 2, 1 sequence without a cut; once per period', async () => {
+    const st = room(3, true);
+    startGame(st, uid(0), now);
+    await play(st);
+    now += 9 * 60_000; next(st);
+    expect(st.cardsEach).toBe(3); // 9 minutes in: a normal game
+    await play(st);
+    now += 2 * 60_000;
+    const ev = startGame(st, uid(0), now); // 11 minutes in
+    expect(ev).toContainEqual(expect.objectContaining({ e: 'game', wellCutGame: 1, forced: true, cardsEach: 4 }));
+    const sizes: number[] = [];
+    for (let g = 0; g < 4; g++) {
+      if (g > 0) next(st);
+      sizes.push(st.cardsEach);
+      await shuffleIn(st);
+      expect(st.phase).toBe('dealing'); // no cut
+      deal(st, st.dealerUid, now); finish(st);
+    }
+    expect(sizes).toEqual([4, 3, 2, 1]);
+    next(st);
+    expect(st.cardsEach).toBe(3); // only one compulsory Well Cut per period
+    expect(st.wellCutCount).toBe(1);
+    // the next period gets its own after 10 minutes
+    await play(st);
+    toPlacecut(st);
+    startGame(st, uid(0), now);
+    expect(st.cardsEach).toBe(3);
+    await play(st);
+    now += 10 * 60_000 + 1; next(st);
+    expect(st.wellCut).toEqual({ active: true, index: 0 });
+    expect(st.cardsEach).toBe(4);
+  });
+
+  it('no compulsory Well Cut in a period that already had one from the cut', async () => {
+    const st = room(3, true);
+    startGame(st, uid(0), now);
+    await shuffleIn(st); cutWell(st); deal(st, st.dealerUid, now); finish(st);
+    for (let g = 0; g < 4; g++) { next(st); await play(st); } // the four Well Cut games
+    now += 12 * 60_000; next(st);
+    expect(st.cardsEach).toBe(3);
+    expect(st.wellCutCount).toBe(1);
+  });
+});
+
+describe('admin and the waiting room', () => {
+  it('the admin can remove a player at Placecut (not during the 20 minutes); their scores stay in the settlement', async () => {
+    const st = room(4);
+    await toBetting(st);
+    expectCode(() => removePlayer(st, uid(0), 2, now), 'round_in_progress');
+    finish(st);
+    toPlacecut(st);
+    expectCode(() => removePlayer(st, uid(1), 2, now), 'not_admin');
+    expectCode(() => removePlayer(st, uid(0), 0, now), 'admin_cannot_leave');
+    removePlayer(st, uid(0), 2, now);
+    expect(st.players.map((p) => p.name)).toEqual(['Rc', 'Srinu', 'Kiran']);
+    expect(st.departed.map((r) => r.name)).toEqual(['Ravi']);
+    expect(st.ledger.at(-1)).toMatchObject({ type: 'leave', name: 'Ravi' });
+    expect(join(st, 'new', 'Naveen', now).seat).toBe(3);
+    startGame(st, uid(0), now); // the next 20 minutes, scores carried forward
+    expect(st.round).toBe(2);
   });
 });
 
@@ -340,7 +414,7 @@ describe('opening contribution (rule update 1)', () => {
     const opening = () => st.ledger.filter((t) => t.type === 'opening' && t.game === st.game);
     expect(opening().map((t) => t.amount)).toEqual([-1, -1, -1, -1, -1]);
     expect(new Set(opening().map((t) => t.name))).toEqual(new Set(NAMES.slice(0, 5)));
-    a(st, 1, 'blind'); a(st, 2, 'see'); a(st, 2, 'seen'); a(st, 3, 'pack');
+    a(st, 4, 'blind'); a(st, 3, 'see'); a(st, 3, 'seen'); a(st, 2, 'pack');
     expect(opening()).toHaveLength(5); // once per game, not per action
     finish(st);
     expect(st.result!.pot).toBe(5 + 1 + 2);
@@ -384,40 +458,43 @@ describe('Blind, Seen and Show (tests 14–17)', () => {
   it('Blind costs 1, Seen costs 2, there is no Chaal', async () => {
     const st = room(3);
     await toBetting(st);
-    a(st, 1, 'blind');
-    expect(st.players[1].coins).toBe(98); // 1 opening coin + 1 Blind
-    a(st, 2, 'see');
-    a(st, 2, 'seen');
-    expect(st.players[2].coins).toBe(97); // 1 opening coin + 2 Seen
+    a(st, 2, 'blind');
+    expect(st.players[2].coins).toBe(98); // 1 opening coin + 1 Blind
+    a(st, 1, 'see');
+    a(st, 1, 'seen');
+    expect(st.players[1].coins).toBe(97); // 1 opening coin + 2 Seen
     expectCode(() => act(st, uid(0), { type: 'chaal' } as never, now), 'bad_action');
     expect(st.pot).toBe(6);
   });
 
-  it('turns go one by one; moves out of turn are rejected', async () => {
-    const st = room(3);
+  it('turns go one by one to the right, starting from the dealer’s right; moves out of turn are rejected', async () => {
+    const st = room(4);
     await toBetting(st);
-    expect(st.turn).toBe(1);
-    expectCode(() => a(st, 2, 'blind'), 'not_your_turn');
+    expect(st.turn).toBe(3); // dealer is seat 0; seat 3 sits on the dealer's right
+    expectCode(() => a(st, 1, 'blind'), 'not_your_turn');
+    const order: number[] = [];
+    for (let k = 0; k < 8; k++) { order.push(st.turn); a(st, st.turn, 'blind'); }
+    expect(order).toEqual([3, 2, 1, 0, 3, 2, 1, 0]);
   });
 
   it('14/15. Show only with two players left; priced automatically', async () => {
     const st = room(3);
     await toBetting(st);
-    expectCode(() => a(st, 1, 'show'), 'show_not_allowed');
-    a(st, 1, 'pack');
-    expect(activeSeats(st)).toEqual([0, 2]);
-    a(st, 2, 'blind');
+    expectCode(() => a(st, 2, 'show'), 'show_not_allowed');
+    a(st, 2, 'pack');
+    expect(activeSeats(st)).toEqual([0, 1]);
+    a(st, 1, 'blind');
     a(st, 0, 'see');
     a(st, 0, 'seen');
-    a(st, 2, 'show'); // seat 2 Blind, seat 0 Seen → Blind Show for 1 coin
+    a(st, 1, 'show'); // seat 1 Blind, seat 0 Seen → Blind Show for 1 coin
     expect(st.ledger.filter((t) => t.type === 'show').at(-1)!.amount).toBe(-1);
     expect(st.result!.reason).toBe('show');
   });
 
   it('two-player exception: both may keep playing Blind, and either may Blind Show for 1 coin while both are Blind', async () => {
     const st = room(3);
-    await toBetting(st, { 0: ['As', 'Ad', 'Kc'], 2: ['2s', '7d', '9c'] });
-    a(st, 1, 'pack');
+    await toBetting(st, { 0: ['As', 'Ad', 'Kc'], 1: ['2s', '7d', '9c'] });
+    a(st, 2, 'pack');
     for (let k = 0; k < 6; k++) a(st, st.turn, 'blind'); // no limit on consecutive Blinds with two players
     expect(st.players.every((p) => !p.seen)).toBe(true);
     const seat = st.turn;
@@ -445,15 +522,15 @@ describe('Blind, Seen and Show (tests 14–17)', () => {
     const st = room(3);
     await toBetting(st);
     a(st, 1, 'see'); a(st, 2, 'see');
-    // seat 1 to act; seat 0 is the only Blind player
-    a(st, 1, 'seen'); a(st, 2, 'seen');
+    // seat 2 to act; seat 0 is the only Blind player
+    a(st, 2, 'seen'); a(st, 1, 'seen');
     expect(viewFor(st, uid(0)).players[0].extraBlindsLeft).toBe(3);
-    a(st, 0, 'blind'); a(st, 1, 'seen'); a(st, 2, 'seen');
-    a(st, 0, 'blind'); a(st, 1, 'seen'); a(st, 2, 'seen');
+    a(st, 0, 'blind'); a(st, 2, 'seen'); a(st, 1, 'seen');
+    a(st, 0, 'blind'); a(st, 2, 'seen'); a(st, 1, 'seen');
     expect(st.players[0].seen).toBe(false);
     a(st, 0, 'blind');
     expect(st.players[0].seen).toBe(true); // automatic reveal after the third
-    a(st, 1, 'seen'); a(st, 2, 'seen');
+    a(st, 2, 'seen'); a(st, 1, 'seen');
     expectCode(() => a(st, 0, 'blind'), 'you_are_seen');
   });
 });
@@ -471,29 +548,29 @@ describe('Blind/Seen rotation (corrected local rule)', () => {
 
   it("the document's example: after the first Seen, a Blind forces the next active player to play Seen", async () => {
     const st = room(7);
-    await toBetting(st); // seat 1 acts first
-    const P = (n: number) => n; // Player n = seat n (Player 1 = seat 1 …)
+    await toBetting(st); // seat 6, on the dealer's right, acts first; play goes to the right
+    const P = (n: number) => (7 - n) % 7; // Player n = the nth player to act (Player 1 = seat 6 …)
     a(st, P(1), 'see'); a(st, P(1), 'seen'); // Player 1: Seen → rotation rule activated
-    expect(viewFor(st, uid(2)).options.mustSeen).toBe(false);
+    expect(viewFor(st, uid(P(2))).options.mustSeen).toBe(false);
     a(st, P(2), 'blind'); // Player 2: Blind → Player 3 must play Seen
-    expect(viewFor(st, uid(3)).options).toMatchObject({ mustSeen: true, blind: false, seen: true });
+    expect(viewFor(st, uid(P(3))).options).toMatchObject({ mustSeen: true, blind: false, seen: true });
     expectCode(() => a(st, P(3), 'blind'), 'must_play_seen');
     a(st, P(3), 'seen'); // Player 3: Seen and continues → Player 4 chooses
-    expect(st.players[3].seen).toBe(true);
-    expect(viewFor(st, uid(4)).options).toMatchObject({ mustSeen: false, blind: true });
+    expect(st.players[P(3)].seen).toBe(true);
+    expect(viewFor(st, uid(P(4))).options).toMatchObject({ mustSeen: false, blind: true });
     a(st, P(4), 'blind'); // Player 4: Blind → Player 5 must play Seen
-    expect(viewFor(st, uid(5)).options.mustSeen).toBe(true);
+    expect(viewFor(st, uid(P(5))).options.mustSeen).toBe(true);
     a(st, P(5), 'pack'); // Player 5 folds → Player 6 must play Seen
-    expect(st.turn).toBe(6);
-    expect(viewFor(st, uid(6)).options.mustSeen).toBe(true);
+    expect(st.turn).toBe(P(6));
+    expect(viewFor(st, uid(P(6))).options.mustSeen).toBe(true);
     expectCode(() => a(st, P(6), 'blind'), 'must_play_seen');
   });
 
   it('folded players are skipped when finding the next active player', async () => {
     const st = room(5);
     await toBetting(st);
-    a(st, 1, 'see'); a(st, 1, 'seen');
-    a(st, 2, 'pack'); a(st, 3, 'blind'); a(st, 4, 'pack');
+    a(st, 4, 'see'); a(st, 4, 'seen');
+    a(st, 3, 'pack'); a(st, 2, 'blind'); a(st, 1, 'pack');
     expect(st.turn).toBe(0);
     expect(viewFor(st, uid(0)).options.mustSeen).toBe(true);
   });
@@ -501,9 +578,9 @@ describe('Blind/Seen rotation (corrected local rule)', () => {
   it('a new game starts without the rule until someone plays Seen again', async () => {
     const st = room(3);
     await toBetting(st);
-    a(st, 1, 'see'); a(st, 1, 'seen'); a(st, 2, 'blind');
+    a(st, 2, 'see'); a(st, 2, 'seen'); a(st, 1, 'blind');
     expect(viewFor(st, uid(0)).options.mustSeen).toBe(true);
-    a(st, 0, 'pack'); a(st, 1, 'pack');
+    a(st, 0, 'pack'); a(st, 2, 'pack');
     next(st); await shuffleIn(st); cutMiss(st); deal(st, st.dealerUid, now);
     a(st, st.turn, 'blind');
     expect(viewFor(st, uid(st.turn)).options.mustSeen).toBe(false);
@@ -512,8 +589,8 @@ describe('Blind/Seen rotation (corrected local rule)', () => {
   it('with only two players left the restriction and the three-Blind limit are removed', async () => {
     const st = room(3);
     await toBetting(st);
-    a(st, 1, 'see'); a(st, 1, 'seen');
-    a(st, 2, 'pack');
+    a(st, 2, 'see'); a(st, 2, 'seen');
+    a(st, 1, 'pack');
     for (let k = 0; k < 12; k++) a(st, st.turn, st.players[st.turn].seen ? 'seen' : 'blind');
     expect(st.players[0].seen).toBe(false); // seat 0 stayed Blind the whole time
     expect(st.phase).toBe('betting');
@@ -524,31 +601,32 @@ describe('Sideshow (tests 18–20)', () => {
   it('18. opens only when every active player is Seen', async () => {
     const st = room(4);
     await toBetting(st);
-    a(st, 1, 'see');
-    expectCode(() => a(st, 1, 'sideshow'), 'sideshow_locked');
+    a(st, 3, 'see');
+    expectCode(() => a(st, 3, 'sideshow'), 'sideshow_locked');
   });
 
   it('19/20. only with the next active player on the left; compulsory; the weaker hand folds; cards stay private', async () => {
     const st = room(4);
-    await toBetting(st, { 1: ['2s', '5h', '9d'], 2: ['As', 'Ah', 'Kd'], 3: ['Qs', 'Js', '3h'], 0: ['4c', '6c', '8d'] });
+    await toBetting(st, { 3: ['2s', '5h', '9d'], 0: ['As', 'Ah', 'Kd'], 1: ['Qs', 'Js', '3h'], 2: ['4c', '6c', '8d'] });
     for (const i of [0, 1, 2, 3]) a(st, i, 'see');
-    a(st, 1, 'sideshow'); // seat 1 asks seat 2 (next on the left) and loses
-    expect(st.players[1].status).toBe('packed');
-    expect(st.players[2].status).toBe('in');
-    const v = viewFor(st, uid(3));
-    expect(v.players[1].cards).toBeNull();
-    expect(v.players[2].cards).toBeNull();
-    // seat 2 to act: the next active on its left is seat 3
-    expect(viewFor(st, uid(2)).options.sideshow?.target).toBe(3);
+    a(st, 3, 'sideshow'); // seat 3 (first to act) asks seat 0 (next on its left) and loses
+    expect(st.players[3].status).toBe('packed');
+    expect(st.players[0].status).toBe('in');
+    const v = viewFor(st, uid(1));
+    expect(v.players[3].cards).toBeNull();
+    expect(v.players[0].cards).toBeNull();
+    // seat 2 to act: the next active on its left is seat 3, who folded, so seat 0
+    expect(st.turn).toBe(2);
+    expect(viewFor(st, uid(2)).options.sideshow?.target).toBe(0);
   });
 
   it('skips folded players when finding the next player on the left', async () => {
     const st = room(4);
     await toBetting(st, { 3: ['As', 'Ah', 'Ad'] });
     for (const i of [0, 1, 2, 3]) a(st, i, 'see');
-    a(st, 1, 'seen');
+    a(st, 3, 'seen');
     a(st, 2, 'pack');
-    expect(viewFor(st, uid(3)).options.sideshow?.target).toBe(0);
+    expect(viewFor(st, uid(1)).options.sideshow?.target).toBe(3);
   });
 });
 
@@ -566,7 +644,7 @@ describe('bonuses (tests 21, 22, 32)', () => {
   it('21b. no bonus when the trail holder does not win', async () => {
     const st = room(3);
     await toBetting(st, { 1: ['7s', '7h', '7d'], 0: ['2c', '5d', '9h'], 2: ['3c', '8d', 'Jh'] });
-    a(st, 1, 'pack'); a(st, 2, 'pack');
+    a(st, 2, 'pack'); a(st, 1, 'pack');
     expect(st.result!.bonus).toBeNull();
   });
 
@@ -629,22 +707,22 @@ describe('bank, loans and elimination (tests 24, 25)', () => {
   it('a player who has used all 200 coins can ask another player for any amount; the lender accepts', async () => {
     const st = room(3);
     await toBetting(st);
-    broke(st, 1, 0);
-    expectCode(() => a(st, 1, 'blind'), 'need_player_loan');
-    expect(viewFor(st, uid(1)).options.borrow).toBe(true);
-    expect(viewFor(st, uid(2)).options.borrow).toBe(false);
-    expectCode(() => requestPlayerLoan(st, uid(2), 0, 10, now), 'not_eligible');
-    expectCode(() => requestPlayerLoan(st, uid(1), 2, 100, now), 'lender_short'); // Ravi has only 99 after the opening coin
-    requestPlayerLoan(st, uid(1), 2, 40, now);
-    expect(viewFor(st, uid(2)).incoming).toEqual([{ id: 1, from: 1, amount: 40 }]);
+    broke(st, 2, 0); // Ravi (seat 2) acts first and has nothing left
+    expectCode(() => a(st, 2, 'blind'), 'need_player_loan');
+    expect(viewFor(st, uid(2)).options.borrow).toBe(true);
+    expect(viewFor(st, uid(1)).options.borrow).toBe(false);
+    expectCode(() => requestPlayerLoan(st, uid(1), 0, 10, now), 'not_eligible');
+    expectCode(() => requestPlayerLoan(st, uid(2), 1, 100, now), 'lender_short'); // Srinu has only 99 after the opening coin
+    requestPlayerLoan(st, uid(2), 1, 40, now);
+    expect(viewFor(st, uid(1)).incoming).toEqual([{ id: 1, from: 2, amount: 40 }]);
     expectCode(() => answerPlayerLoan(st, uid(0), 1, true, now), 'not_lender');
-    answerPlayerLoan(st, uid(2), 1, true, now);
-    expect(st.players[1].coins).toBe(40);
-    expect(st.players[2].coins).toBe(59);
-    expect(viewFor(st, uid(0)).p2p).toMatchObject([{ borrowerName: 'Srinu', lenderName: 'Ravi', amount: 40 }]);
+    answerPlayerLoan(st, uid(1), 1, true, now);
+    expect(st.players[2].coins).toBe(40);
+    expect(st.players[1].coins).toBe(59);
+    expect(viewFor(st, uid(0)).p2p).toMatchObject([{ borrowerName: 'Ravi', lenderName: 'Srinu', amount: 40 }]);
     expect(st.ledger.slice(-2).map((t) => [t.type, t.amount])).toEqual([['p2p_out', -40], ['p2p_in', 40]]);
     expect(conserved(st, 3)).toBe(true); // existing coins moved; none created
-    a(st, 1, 'blind');
+    a(st, 2, 'blind');
   });
 
   it('after a decline the borrower can ask someone else; a request can be cancelled', async () => {
@@ -677,7 +755,7 @@ describe('bank, loans and elimination (tests 24, 25)', () => {
       { borrower: 'Ravi', lender: 'Rc', amount: 20, game: 1, at: now },
       { borrower: 'Ravi', lender: 'Rc', amount: 15, game: 1, at: now },
     ]);
-    a(st, 1, 'pack'); a(st, 2, 'pack');
+    a(st, 2, 'pack'); a(st, 1, 'pack');
     toPlacecut(st);
     const rows = viewFor(st, uid(0)).scorecard!.rows;
     const ravi = rows.find((r) => r.name === 'Ravi')!, rc = rows.find((r) => r.name === 'Rc')!;
@@ -692,7 +770,7 @@ describe('bank, loans and elimination (tests 24, 25)', () => {
   it('a player with no coins and no bank loan left sits a game out but stays at the table', async () => {
     const st = room(3);
     await toBetting(st);
-    a(st, 1, 'pack'); a(st, 2, 'pack');
+    a(st, 2, 'pack'); a(st, 1, 'pack');
     broke(st, 2, 0);
     next(st);
     expect(st.players[2].status).toBe('eliminated');
@@ -713,7 +791,7 @@ describe('rounds, Placecut and settlement (tests 26, 28, 29)', () => {
     startGame(st, uid(0), now);
     expect(st.roundEndsAt).toBe(now + 20 * 60_000);
     await shuffleIn(st); cutMiss(st); deal(st, uid(0), now);
-    a(st, 1, 'pack'); a(st, 2, 'pack');
+    a(st, 2, 'pack'); a(st, 1, 'pack');
     // an individual game settlement, not a Placecut
     expect(st.phase).toBe('game_over');
     expect(viewFor(st, uid(1)).scorecard).toMatchObject({ kind: 'game', round: 1 });
@@ -738,7 +816,7 @@ describe('rounds, Placecut and settlement (tests 26, 28, 29)', () => {
   it('if nobody starts the next game, the Placecut opens by itself when the 20 minutes run out', async () => {
     const st = room(3);
     await toBetting(st);
-    a(st, 1, 'pack'); a(st, 2, 'pack');
+    a(st, 2, 'pack'); a(st, 1, 'pack');
     expect(st.deadline!.at).toBe(st.roundEndsAt);
     onDeadline(st, st.roundEndsAt! + 1);
     expect(st.phase).toBe('placecut');
@@ -748,12 +826,12 @@ describe('rounds, Placecut and settlement (tests 26, 28, 29)', () => {
     const st = room(3);
     takeLoan(st, uid(2), 30, now);
     await toBetting(st);
-    a(st, 1, 'blind'); a(st, 2, 'see'); a(st, 2, 'seen'); a(st, 0, 'pack'); a(st, 1, 'pack');
+    a(st, 2, 'see'); a(st, 2, 'seen'); a(st, 1, 'pack'); a(st, 0, 'pack');
     let card = viewFor(st, uid(1)).scorecard!;
     expect(card).toMatchObject({ kind: 'game', round: 1 });
     const ravi = card.rows.find((r) => r.name === 'Ravi')!;
-    // pot: 3 opening coins + Srinu's Blind 1 + Ravi's Seen 2 = 6; Ravi paid 3 of it
-    expect(ravi).toMatchObject({ initial: 100, loanTotal: 30, outstandingLoan: 30, winnings: 6, startBalance: 130, change: 3 });
+    // pot: 3 opening coins + Ravi's Seen 2 = 5; Ravi paid 3 of it
+    expect(ravi).toMatchObject({ initial: 100, loanTotal: 30, outstandingLoan: 30, winnings: 5, startBalance: 130, change: 2 });
     expect(ravi.net).toBe(ravi.balance - 100 - 30);
     toPlacecut(st);
     startGame(st, uid(0), now);
@@ -775,7 +853,7 @@ describe('rounds, Placecut and settlement (tests 26, 28, 29)', () => {
     await toBetting(st);
     callOff(st, uid(0), now);
     expect(st.phase).toBe('betting');
-    a(st, 1, 'pack'); a(st, 2, 'pack');
+    a(st, 2, 'pack'); a(st, 1, 'pack');
     nextGame(st, now);
     expect(st.phase).toBe('ended');
     expect(st.scorecards.at(-1)!.final).toBe(true);
@@ -790,7 +868,7 @@ describe('timer switch and games with 2–7 players (tests 2, 32)', () => {
     setTimer(st, uid(0), true, now);
     now += 31_000;
     const ev = onDeadline(st, now);
-    expect(ev[0]).toMatchObject({ e: 'pack', seat: 1, reason: 'timeout' });
+    expect(ev[0]).toMatchObject({ e: 'pack', seat: 2, reason: 'timeout' });
     expectCode(() => setTimer(st, uid(1), false, now), 'not_admin');
   });
 

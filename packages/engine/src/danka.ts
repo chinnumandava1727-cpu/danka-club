@@ -221,7 +221,7 @@ export type GameEvent =
   | { e: 'left'; name: string }
   | { e: 'start'; game: number }
   | { e: 'period'; round: number; endsAt: number }
-  | { e: 'game'; game: number; cardsEach: number; wellCutGame: number | null }
+  | { e: 'game'; game: number; cardsEach: number; wellCutGame: number | null; forced?: boolean }
   | { e: 'commit'; hash: string }
   | { e: 'cut'; seat: number; pos: number; off: number; players: number; wellCut: boolean; auto: boolean }
   | { e: 'deal'; dealer: number; order: number[]; cardsEach: number; auto: boolean }
@@ -271,6 +271,8 @@ export interface State {
   wellCut: { active: boolean; index: number };
   /** A Well Cut was stopped in the current game: the four-game sequence starts with the next game. */
   wellCutNext?: boolean;
+  /** The period in which the last Well Cut sequence was started or queued (one compulsory Well Cut per period). */
+  wellCutRound?: number;
   wellCutCount: number;
   /** Bank loans issued in the tournament. */
   bankLoansTotal: number;
@@ -333,6 +335,17 @@ export const dealerIndex = (st: State) => Math.max(0, seatOf(st, st.dealerUid));
 export const activeSeats = (st: State) => st.players.flatMap((p, i) => (p.status === 'in' ? [i] : []));
 const inRound = (st: State) => ['shuffling', 'cutting', 'dealing', 'betting', 'game_over'].includes(st.phase);
 
+/** The next active player on the RIGHT (anticlockwise): the order of play, starting from the dealer's right. */
+export function prevActive(st: State, from: number): number {
+  const n = st.players.length;
+  for (let k = 1; k <= n; k++) {
+    const j = (from - k + n * 2) % n;
+    if (st.players[j].status === 'in') return j;
+  }
+  return -1;
+}
+
+/** The next active player on the LEFT (clockwise): who cuts, and who a Sideshow is asked of. */
 export function nextActive(st: State, from: number): number {
   const n = st.players.length;
   for (let k = 1; k <= n; k++) {
@@ -453,6 +466,21 @@ export function leave(st: State, uid: string, now: number): GameEvent[] {
   return [{ e: 'left', name: p.name }];
 }
 
+/** At Placecut (or before the first period) the admin may remove a player; their scores are kept in the settlement. */
+export function removePlayer(st: State, uid: string, seat: number, now: number): GameEvent[] {
+  if (uid !== st.adminUid) fail('not_admin', 'Only the admin can remove players.');
+  if (!atBoundary(st)) fail('round_in_progress', 'Players can be removed at Placecut.');
+  const p = st.players[seat];
+  if (!p) fail('no_player', 'That seat is empty.');
+  if (p.uid === st.adminUid) fail('admin_cannot_leave', 'The admin calls off the tournament instead of leaving.');
+  st.requests = st.requests.filter((r) => r.from !== p.uid && r.to !== p.uid);
+  tx(st, now, seatOf(st, uid), 'admin', 0, `Removed ${p.name}`);
+  tx(st, now, seat, 'leave', 0, `Removed by the admin with ${p.coins} coins, bank loan ${p.loan}, owes players ${owesPlayers(st, p.uid)}, owed ${owedByPlayers(st, p.uid)}`);
+  st.departed.push(rowFor(st, p, true));
+  st.players.splice(seat, 1);
+  return [{ e: 'left', name: p.name }];
+}
+
 export function setTableSize(st: State, uid: string, size: number): GameEvent[] {
   if (uid !== st.adminUid) fail('not_admin', 'Only the admin can change the table size.');
   if (!atBoundary(st)) fail('round_in_progress', 'Change the table size at Placecut.');
@@ -543,11 +571,21 @@ function beginGame(st: State, now: number): GameEvent[] {
   st.lastCut = null;
   st.cutBar = null;
   st.dealt = activeSeats(st);
+  // Compulsory Well Cut: once `forcedWellCutMinutes` of a period have passed, the next new game starts the
+  // four-game Well Cut sequence, unless a Well Cut has already been played or queued in this period.
+  let forced = false;
+  if (!st.wellCut.active && !st.wellCutNext && st.roundEndsAt !== null && st.wellCutRound !== st.round
+    && now >= st.roundEndsAt - (st.rules.roundMinutes - st.rules.forcedWellCutMinutes) * 60_000) {
+    st.wellCut = { active: true, index: 0 };
+    st.wellCutCount += 1;
+    st.wellCutRound = st.round;
+    forced = true;
+  }
   st.cardsEach = st.wellCut.active ? st.rules.wellCutSequence[st.wellCut.index] : st.rules.normalCards;
   st.phase = 'shuffling';
   st.deadline = null;
   for (const i of st.dealt) st.players[i].rs.games += 1;
-  ev.push({ e: 'game', game: st.game, cardsEach: st.cardsEach, wellCutGame: wellCutGameNo(st) });
+  ev.push({ e: 'game', game: st.game, cardsEach: st.cardsEach, wellCutGame: wellCutGameNo(st), ...(forced ? { forced: true } : {}) });
   // Rule update 1: every player in the game puts 1 coin into the pot once, before any Blind, Seen or pack.
   // A player short of the coin borrows it from the bank automatically (canPlay guarantees there is loan left).
   const amount = st.rules.openingCoins;
@@ -669,6 +707,7 @@ export function cut(st: State, uid: string | null, at: number, now: number): Gam
   if (wellCut) {
     st.wellCutNext = true;
     st.wellCutCount += 1;
+    st.wellCutRound = st.round;
   }
   lockCards(st);
   st.phase = 'dealing';
@@ -682,7 +721,8 @@ export function deal(st: State, uid: string | null, now: number): GameEvent[] {
   if (uid !== null && uid !== st.dealerUid) fail('not_dealer', 'Only the dealer deals.');
   const ev: GameEvent[] = [{ e: 'deal', dealer: dealerIndex(st), order: dealOrder(st), cardsEach: st.cardsEach, auto: uid === null }];
   st.phase = 'betting';
-  setTurn(st, nextActive(st, dealerIndex(st)), now, ev);
+  // Rule update: play starts with the player on the dealer's right and goes round to the right.
+  setTurn(st, prevActive(st, dealerIndex(st)), now, ev);
   return ev;
 }
 
@@ -815,7 +855,7 @@ export function act(st: State, uid: string, action: Action, now: number): GameEv
 function advance(st: State, from: number, now: number, ev: GameEvent[]) {
   const active = activeSeats(st);
   if (active.length === 1) return finishGame(st, active[0], 'all_packed', null, now, ev);
-  setTurn(st, nextActive(st, from), now, ev);
+  setTurn(st, prevActive(st, from), now, ev);
 }
 
 /** §13 Borrow from the central bank. Cumulative loans never exceed the limit. */
